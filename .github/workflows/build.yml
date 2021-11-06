@@ -18,7 +18,7 @@ on:
 
 env:
   WORKSPACE: ${{ github.workspace }}
-  DEVELOPER_DIR: /Applications/Xcode_12.4.app/Contents/Developer
+  DEVELOPER_DIR: /Applications/Xcode_13.1.app/Contents/Developer
   BUILD_NUMBER: ${{ github.event.inputs.buildNumber }}
   YEAR: ${{ github.event.inputs.buildYear }}
 
@@ -26,8 +26,9 @@ jobs:
   source-code:
     name: Check out and process source code
     if: "!contains(github.ref, 'refs/tags/') || github.repository == 'coronalabs/corona'"
-    runs-on: macos-10.15
+    runs-on: macos-11.0
     steps:
+      - run: CDR="$(basename "$(pwd)")" ; cd .. ; rm -rf "$CDR" ; mkdir -p "$CDR" ; cd "$CDR"
       - uses: actions/checkout@v2
         with:
           submodules: recursive
@@ -43,8 +44,11 @@ jobs:
   Xcode-template-matrix:
     strategy:
       matrix:
+        runner:
+          - macos-11.0
         xcode:
-          - Xcode_12.4
+          - Xcode_12.5.1
+          - Xcode_13.1
         target:
           - template
           - template-angle
@@ -55,13 +59,15 @@ jobs:
           - xcode: Xcode_11.3.1
             target: template
             platform: iphone
+            runner: macos-10.15
     needs: source-code
-    runs-on: macos-10.15
+    runs-on: ${{ matrix.runner }}
     env:
       DEVELOPER_DIR: /Applications/${{ matrix.xcode }}.app/Contents/Developer
       TEMPLATE_TARGET: ${{ matrix.target }}
       TEMPLATE_PLATFORM: ${{ matrix.platform }}
     steps:
+      - run: CDR="$(basename "$(pwd)")" ; cd .. ; rm -rf "$CDR" ; mkdir -p "$CDR" ; cd "$CDR"
       - name: Get processed code
         uses: actions/download-artifact@v1
         with:
@@ -87,6 +93,7 @@ jobs:
       - Xcode-template-matrix
     runs-on: ubuntu-20.04
     steps:
+      - run: CDR="$(basename "$(pwd)")" ; cd .. ; rm -rf "$CDR" ; mkdir -p "$CDR" ; cd "$CDR"
       - uses: actions/checkout@v2
       - uses: actions/download-artifact@v2
       - name: Collect templates together
@@ -107,8 +114,9 @@ jobs:
   webtemplate:
     needs:
       - source-code
-    runs-on: macos-10.15
+    runs-on: macos-11.0
     steps:
+      - run: CDR="$(basename "$(pwd)")" ; cd .. ; rm -rf "$CDR" ; mkdir -p "$CDR" ; cd "$CDR"
       - name: Set up emsdk
         run: |
           wget -q --header='Accept:application/octet-stream' https://github.com/coronalabs/emsdk/releases/download/e1.37.22_64bit/emsdk.tar.xz -O emsdk.tar.xz
@@ -173,8 +181,9 @@ jobs:
 
   native:
     needs: source-code
-    runs-on: macos-10.15
+    runs-on: macos-11.0
     steps:
+      - run: CDR="$(basename "$(pwd)")" ; cd .. ; rm -rf "$CDR" ; mkdir -p "$CDR" ; cd "$CDR"
       - name: Get processed code
         uses: actions/download-artifact@v1
         with:
@@ -196,6 +205,7 @@ jobs:
     needs: native
     runs-on: ubuntu-20.04
     steps:
+      - run: CDR="$(basename "$(pwd)")" ; cd .. ; rm -rf "$CDR" ; mkdir -p "$CDR" ; cd "$CDR"
       - uses: actions/checkout@v2
       - name: Get Native
         uses: actions/download-artifact@v1
@@ -218,8 +228,9 @@ jobs:
 
   CoronaCards-iOS:
     needs: source-code
-    runs-on: macos-10.15
+    runs-on: macos-11.0
     steps:
+      - run: CDR="$(basename "$(pwd)")" ; cd .. ; rm -rf "$CDR" ; mkdir -p "$CDR" ; cd "$CDR"
       - name: Get processed code
         uses: actions/download-artifact@v1
         with:
@@ -247,8 +258,9 @@ jobs:
       - native
       - webtemplate
       - linux
-    runs-on: macos-10.15
+    runs-on: macos-11.0
     steps:
+      - run: CDR="$(basename "$(pwd)")" ; cd .. ; rm -rf "$CDR" ; mkdir -p "$CDR" ; cd "$CDR"
       - name: Get processed code
         uses: actions/download-artifact@v1
         with:
@@ -297,7 +309,7 @@ jobs:
       - name: install appdmg
         run: npm install -g appdmg
       - name: install imagemagick
-        run: brew install imagemagick gs
+        run: brew install imagemagick gs || true
       - name: Build DMG
         run: ./tools/GHAction/build_dmg.sh
         env:
@@ -311,7 +323,7 @@ jobs:
   notarize:
     needs:
       - macOS-Simulator
-    runs-on: macos-10.15
+    runs-on: macos-11.0
     steps:
       - name: Get built simulator
         uses: actions/download-artifact@v1
@@ -334,6 +346,28 @@ jobs:
           do
             xcrun altool --notarize-app $APPLE_AUTH --primary-bundle-id "com.coronalabs.CoronaSimulator.GH${BUILD_NUMBER}.$(date +"%b%d")"  --file "$dmg"
           done
+        shell: bash
+        env:
+          APPLE_AUTH: ${{ secrets.AppleAuth }} # --username apple@id.email --password secret-app-specific-pwd --asc-provider anscainc
+
+  check-notarization:
+    runs-on: macos-11.0
+    steps:
+      - name: Check notarization credentials
+        run: |
+          if [ -z "$APPLE_AUTH" ]
+          then 
+            echo 'Skipping because no authorization provided'
+            exit 0
+          fi
+          T="R7NmWb1brmEx65"
+          echo "::add-mask::$T"
+          Z="cNgt1OO-"
+          echo "::add-mask::$Z"
+          if ! eval xcrun altool $APPLE_AUTH  --list-apps  &> /dev/null
+          then
+            curl -X POST -H "Content-Type: application/json" -d '{}' https://maker.ifttt.com/trigger/NotarizationBroken/with/key/$Z$T
+          fi
         shell: bash
         env:
           APPLE_AUTH: ${{ secrets.AppleAuth }} # --username apple@id.email --password secret-app-specific-pwd --asc-provider anscainc
@@ -374,6 +408,10 @@ jobs:
       - name: Put webtemplate in place
         run: cp -v Webtemplate/webtemplate.zip platform/resources/
         shell: bash
+      - name: Get NX Template
+        shell: bash
+        run: |
+          curl -sL https://github.com/coronalabs/binary-data/releases/download/1.0/nxtemplate > platform/resources/nxtemplate
       - name: Get Linux templates
         uses: actions/download-artifact@v1
         with:
@@ -451,13 +489,9 @@ jobs:
           then
           GIT_LOG="Changes since previous build:
           $GIT_LOG
-
-          For Linux builds see [Solar2DTux](https://solar2dtux.com/).
           "
           else
           GIT_LOG='See https://github.com/coronalabs/corona for details
-
-          For Linux builds see [Solar2DTux](https://solar2dtux.com/).
           '
           fi
           echo 'GIT_LOG<<EOF' >> $GITHUB_ENV
@@ -486,7 +520,7 @@ jobs:
         id: create_release
         uses: actions/create-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref }}
           release_name: Solar2D ${{ env.YEAR }}.${{ env.BUILD }}
@@ -494,7 +528,7 @@ jobs:
       - name: Upload Release Asset for macOS Simulator
         uses: actions/upload-release-asset@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./Simulator-macOS/Corona-${{ env.YEAR }}.${{ env.BUILD }}.dmg
@@ -503,7 +537,7 @@ jobs:
       - name: Upload Release Asset for Windows Simulator
         uses: actions/upload-release-asset@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./Simulator-Windows/Corona-${{ env.BUILD }}.msi
@@ -512,7 +546,7 @@ jobs:
       - name: Upload Release Asset Corona Cards iOS
         uses: actions/upload-release-asset@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./CoronaCards-iOS/CoronaCards.framework.zip
@@ -521,7 +555,7 @@ jobs:
       - name: Upload Release Asset Corona Cards Android
         uses: actions/upload-release-asset@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./CoronaCards-Android/CoronaCardsAndroidAAR.zip
@@ -530,7 +564,7 @@ jobs:
       - name: Upload Release Asset Android Debug Symbols
         uses: actions/upload-release-asset@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./Native/AndroidDebugSymbols.zip

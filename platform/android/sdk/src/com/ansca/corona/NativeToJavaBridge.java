@@ -2256,9 +2256,9 @@ public class NativeToJavaBridge {
 		return null;
 	}
 
-	protected static void callVibrate(CoronaRuntime runtime)
+	protected static void callVibrate(CoronaRuntime runtime, String hapticType, String hapticStyle)
 	{
-		runtime.getController().vibrate();
+		runtime.getController().vibrate(hapticType, hapticStyle);
 	}
 
 	protected static void callSetLocationAccuracy( double meters, CoronaRuntime runtime )
@@ -2448,7 +2448,12 @@ public class NativeToJavaBridge {
 	{
 		runtime.getViewManager().setTextViewFocus(id, focus);
 	}
-	
+
+	protected static boolean callDisplayObjectSetNativeProperty( CoronaRuntime runtime, int id, String key, long luaStateMemoryAddress, int index )
+	{
+		return runtime.getViewManager().setNativeProperty(id, key, luaStateMemoryAddress, index);
+	}
+
 	protected static boolean callRecordStart( CoronaRuntime runtime, String file, long id )
 	{
 		return runtime.getController().getMediaManager().getAudioRecorder( id ).startRecording( file );

@@ -17,7 +17,7 @@ val coronaResourcesDir: String? by project
 val coronaDstDir: String? by project
 val coronaTmpDir: String? by project
 val coronaAppFileName: String? by project
-val coronaAppPackage = project.findProperty("coronaAppPackage") as? String ?: "com.corona.test"
+val coronaAppPackage = project.findProperty("coronaAppPackage") as? String ?: "com.corona.app"
 val coronaKeystore: String? by project
 val coronaKeystorePassword: String? by project
 val coronaKeyAlias: String? by project
@@ -181,11 +181,13 @@ if (configureCoronaPlugins == "YES") {
 //</editor-fold>
 
 android {
-    buildToolsVersion("29.0.3")
-    compileSdkVersion(29)
+    lintOptions {
+        isCheckReleaseBuilds = false
+    }
+    compileSdkVersion(30)
     defaultConfig {
         applicationId = coronaAppPackage
-        targetSdkVersion(29)
+        targetSdkVersion(30)
         minSdkVersion(extra["minSdkVersion"] as Int)
         versionCode = coronaVersionCode
         versionName = coronaVersionName
@@ -244,6 +246,9 @@ android {
     }
     aaptOptions {
         additionalParameters("--extra-packages", extraPackages.filter { it.isNotBlank() }.joinToString(":"))
+    }
+    if (isExpansionFileRequired) {
+        assetPacks.add(":preloadedAssets")
     }
     // This is dirty hack because Android Assets refuse to copy assets which start with . or _
     if (!isExpansionFileRequired) {
@@ -490,7 +495,7 @@ android.applicationVariants.all {
         }
         doFirst {
             if (!file(coronaSrcDir).isDirectory) {
-                throw InvalidUserDataException("Unable to find Corona project to build!")
+                throw InvalidUserDataException("Unable to find Solar2D project (for example platform/test/assets2/main.lua)!")
             }
         }
     }
@@ -779,6 +784,7 @@ tasks.register<Zip>("exportCoronaAppTemplate") {
         exclude("app/build/**", "app/CMakeLists.txt")
         exclude("**/*.iml", "**/\\.*")
         include("setup.sh", "setup.bat")
+        include("preloadedAssets/build.gradle.kts")
         into("template")
     }
     from(android.sdkDirectory) {
@@ -816,7 +822,7 @@ tasks.register<Copy>("exportToNativeAppTemplate") {
     from(rootDir) {
         include("app/build.gradle.kts")
         filter {
-            it.replace("com.corona.test", "com.mycompany.app")
+            it.replace("com.corona.app", "com.mycompany.app")
         }
     }
 
@@ -869,9 +875,11 @@ fun copyWithAppFilename(dest: String, appName: String?) {
         android.applicationVariants.matching {
             it.name.equals("release", true)
         }.all {
-            copyTask.from(packageApplicationProvider!!.get().outputDirectory) {
-                include("*.apk")
-                exclude("*unsigned*")
+            if(!isExpansionFileRequired) {
+                copyTask.from(packageApplicationProvider!!.get().outputDirectory) {
+                    include("*.apk")
+                    exclude("*unsigned*")
+                }
             }
             copyTask.from("$buildDir/outputs/bundle/$name") {
                 include("*.aab")
@@ -904,10 +912,6 @@ tasks.create("buildCoronaApp") {
                 }
             }
             delete("$it/$coronaExpansionFileName")
-            copy {
-                from("$buildDir/outputs/$coronaExpansionFileName")
-                into(it)
-            }
         }
     }
 }
