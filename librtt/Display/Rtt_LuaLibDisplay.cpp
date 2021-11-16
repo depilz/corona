@@ -28,6 +28,7 @@
 #include "Display/Rtt_ShapeAdapterPolygon.h"
 #include "Display/Rtt_ShapeAdapterMesh.h"
 #include "Display/Rtt_ShapeObject.h"
+#include "Display/Rtt_SpineObject.h"
 #include "Display/Rtt_ShapePath.h"
 #include "Display/Rtt_SnapshotObject.h"
 #include "Display/Rtt_StageObject.h"
@@ -74,6 +75,8 @@
 #include <string.h>
 
 #include "Rtt_LuaAux.h"
+
+#include "spine/spine-solar2d.h"
 
 #ifdef Rtt_WIN_ENV
 #undef CreateFont
@@ -150,6 +153,7 @@ class DisplayLibrary
 		static int newSnapshot( lua_State *L );
 		static int newSprite( lua_State *L );
 		static int newMesh( lua_State *L );
+		static int newSpine( lua_State *L );
 		static int getDefault( lua_State *L );
 		static int setDefault( lua_State *L );
 		static int getCurrentStage( lua_State *L );
@@ -214,6 +218,7 @@ DisplayLibrary::Open( lua_State *L )
 		{ "newSnapshot", newSnapshot },
 		{ "newSprite", newSprite },
 		{ "newMesh", newMesh },
+		{ "newSpine", newSpine },
 		{ "getDefault", getDefault },
 		{ "setDefault", setDefault },
 		{ "getCurrentStage", getCurrentStage },
@@ -841,6 +846,66 @@ DisplayLibrary::newMesh( lua_State *L )
 		CoronaLuaWarning( L, "display.newMesh() is only supported in graphics 2.0" );
 	}
 	
+	return result;
+}
+	
+int
+DisplayLibrary::newSpine( lua_State *L )
+{
+	int result = 0;
+	
+	Self *library = ToLibrary( L );
+	Display& display = library->GetDisplay();
+	
+	int nextArg = 1;
+
+	GroupObject *parent = NULL;
+	Real x=0,y=0;
+	
+	if ( lua_istable( L, nextArg ) && LuaProxy::IsProxy(L, nextArg))
+	{
+		parent = GetParent( L, nextArg );
+	}
+	
+	if(lua_type(L, nextArg) == LUA_TNUMBER && lua_type(L, nextArg+1) == LUA_TNUMBER)
+	{
+		x = lua_tonumber( L, nextArg++ );
+		y = lua_tonumber( L, nextArg++ );
+	}
+	
+	if(lua_istable( L, nextArg ))
+	{
+		lua_getfield( L, -1, "parent" );
+		if ( lua_istable( L, -1) )
+		{
+			int parentArg = Lua::Normalize( L, -1 );
+			parent = GetParent( L, parentArg );
+		}
+		lua_pop( L, 1 );
+		
+		lua_getfield( L, -1, "x" );
+		if (lua_type( L, -1 ) == LUA_TNUMBER)
+		{
+			x = lua_tonumber( L, -1 );
+		}
+		lua_pop( L, 1 );
+		
+		lua_getfield( L, -1, "y" );
+		if (lua_type( L, -1 ) == LUA_TNUMBER)
+		{
+			y = lua_tonumber( L, -1 );
+		}
+		lua_pop( L, 1 );
+	}
+	else
+	{
+		CoronaLuaError( L, "display.newMesh() bad argument #%d: table expected but got %s",
+					   nextArg, lua_typename( L, lua_type( L, nextArg ) ));
+		return result;
+	}
+
+	SpineObject *v = SpineObject::New(display.GetAllocator(), w, h);
+
 	return result;
 }
 	
