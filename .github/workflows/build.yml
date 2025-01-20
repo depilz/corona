@@ -46,6 +46,20 @@ jobs:
     needs: source-code
     runs-on: macos-14
     steps:
+      - uses: actions/checkout@v4
+      - name: Install Developer ID certificate
+        if: ${{ secrets.MAC_CERT_BASE64 && secrets.MAC_CERT_PASSWORD }}
+        run: |
+          echo "${{ secrets.MAC_CERT_BASE64 }}" | base64 --decode > dev_id.p12
+
+          security create-keychain -p "" build.keychain
+          security set-keychain-settings build.keychain
+          security unlock-keychain -p "" build.keychain
+
+          security import dev_id.p12 -k build.keychain -P "${{ secrets.MAC_CERT_PASSWORD }}" -A
+          security list-keychains -s build.keychain
+          security default-keychain -s build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
       - run: CDR="$(basename "$(pwd)")" ; cd .. ; rm -rf "$CDR" ; mkdir -p "$CDR" ; cd "$CDR"
       - name: Get processed code
         uses: actions/download-artifact@v4
