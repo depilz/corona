@@ -484,7 +484,7 @@ local function generateXcent( options )
 	local data = templateXcent
 
 	-- Set "get-task-allow" to the same value as in the provisioning profile
-	local get_task_allow_setting = captureCommandOutput("security cms -D -i '".. options.mobileProvision .."' | plutil -p - | fgrep 'get-task-allow'")
+	local get_task_allow_setting = captureCommandOutput("security cms -D -i '".. options.mobileProvision .."' | plutil -extract Entitlements.get-task-allow raw -o - -")
 	if debugBuildProcess and debugBuildProcess ~= 0 then
 		print("get_task_allow_setting: ".. tostring(get_task_allow_setting))
 	end
