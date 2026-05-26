@@ -973,6 +973,12 @@ int ShapeAdapterMesh::update(lua_State *L)
 		{
 			path->Invalidate(pathInvalidated);
 			path->GetObserver()->Invalidate(observerInvalidated);
+
+			if (fromVertices)
+			{
+				tesselator->Invalidate();
+				tesselator->Update();
+			}
 		}
 	}
 
