@@ -1211,6 +1211,60 @@ DisplayLibrary::newImage( lua_State *L )
 }
 
 
+#ifdef Rtt_AUTHORING_SIMULATOR
+// Warn once per file per run when the bitmap has at least 4x the pixels it covers on screen (longer side >= 256 px).
+static void
+WarnIfOversizedImage( lua_State *L, const Display& display, BitmapPaint *paint, const char *imageName, MPlatform::Directory baseDir, Real w, Real h )
+{
+    PlatformBitmap *bitmap = paint->GetBitmap();
+    Texture *texture = paint->GetTexture();
+    if ( w <= Rtt_REAL_0 || h <= Rtt_REAL_0 || ( ! bitmap && ! texture ) )
+    {
+        return;
+    }
+
+    const U32 bitmapWidth = bitmap ? bitmap->UprightWidth() : texture->GetWidth();
+    const U32 bitmapHeight = bitmap ? bitmap->UprightHeight() : texture->GetHeight();
+    if ( Max( bitmapWidth, bitmapHeight ) < 256 )
+    {
+        return;
+    }
+
+    const double displayedWidth = Rtt_RealToFloat( w ) / Rtt_RealToFloat( display.GetSx() );
+    const double displayedHeight = Rtt_RealToFloat( h ) / Rtt_RealToFloat( display.GetSy() );
+    if ( (double)bitmapWidth * (double)bitmapHeight < 4.0 * displayedWidth * displayedHeight )
+    {
+        return;
+    }
+
+    static const char kWarnedKey[] = "Rtt.OversizedImageWarnings";
+    lua_getfield( L, LUA_REGISTRYINDEX, kWarnedKey );
+    if ( ! lua_istable( L, -1 ) )
+    {
+        lua_pop( L, 1 );
+        lua_newtable( L );
+        lua_pushvalue( L, -1 );
+        lua_setfield( L, LUA_REGISTRYINDEX, kWarnedKey );
+    }
+
+    lua_pushfstring( L, "%d:%s", (int)baseDir, imageName );
+    lua_rawget( L, -2 );
+    const bool isWarned = lua_toboolean( L, -1 );
+    lua_pop( L, 1 );
+
+    if ( ! isWarned )
+    {
+        lua_pushfstring( L, "%d:%s", (int)baseDir, imageName );
+        lua_pushboolean( L, 1 );
+        lua_rawset( L, -3 );
+
+        CoronaLuaWarning( L, "display.newImageRect(): the image '%s' is %ux%u pixels but is drawn at about %dx%d pixels on this device. Use a smaller image, or dynamic image selection (imageSuffix in config.lua)",
+            imageName, bitmapWidth, bitmapHeight, (int)( displayedWidth + 0.5 ), (int)( displayedHeight + 0.5 ) );
+    }
+    lua_pop( L, 1 );
+}
+#endif
+
 // display.newImageRect( [parentGroup,] filename [, baseDirectory], w, h )
 // display.newImageRect( imageGroup, frameIndex, w, h )
 int
@@ -1261,6 +1315,12 @@ DisplayLibrary::newImageRect( lua_State *L )
             {
                 CoronaLuaWarning(L, "file '%s' does not contain a valid image", imageName);
             }
+#ifdef Rtt_AUTHORING_SIMULATOR
+            if ( paint )
+            {
+                WarnIfOversizedImage( L, display, paint, imageName, baseDir, w, h );
+            }
+#endif
             if ( Rtt_VERIFY( paint ) )
             {
                 result = NULL != PushImage( L, NULL, paint, display, parent, w, h, replacement );
