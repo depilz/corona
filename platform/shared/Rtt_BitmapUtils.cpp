@@ -66,6 +66,7 @@ namespace bitmapUtil
 		jpeg_stdio_src(&cinfo, infile);
 
 		jpeg_read_header(&cinfo, TRUE);
+		cinfo.out_color_space = JCS_RGB;	// callers expect 3 bytes per pixel; grayscale is expanded, CMYK fails
 		jpeg_start_decompress(&cinfo);
 
 		int row_stride = cinfo.output_width * cinfo.output_components;
