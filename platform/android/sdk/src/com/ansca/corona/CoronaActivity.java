@@ -3837,5 +3837,12 @@ public class CoronaActivity extends Activity {
 				}
 			}
 		}
+
+		// Calls the GL view directly because the event queue does not run while in background.
+		if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_MODERATE
+			&& fCoronaRuntime != null && !fCoronaRuntime.isRunning() && myGLView != null)
+		{
+			myGLView.releaseEglContext();
+		}
 	}
 }
