@@ -1049,8 +1049,8 @@ Renderer::Swap()
     fSyncedCount = length;
 }
 
-void
-Renderer::QueueCreate( CPUResource* resource )
+GPUResource*
+Renderer::AttachGPUResource( CPUResource* resource )
 {
     Rtt_ASSERT(resource->GetGPUResource() == NULL);
     GPUResource* gpuResource = Create( resource );
@@ -1061,8 +1061,33 @@ Renderer::QueueCreate( CPUResource* resource )
         
         //No-OP in null case
         resource->AttachObserver(fCPUResourceObserver);
+    }
+    return gpuResource;
+}
+
+void
+Renderer::QueueCreate( CPUResource* resource )
+{
+    if( AttachGPUResource( resource ) )
+    {
         fCreateQueue.Append( resource );
     }
+}
+
+void
+Renderer::Precompile( CPUResource* resource, U32 version )
+{
+    GPUResource* gpuResource = resource->GetGPUResource();
+    if( !gpuResource )
+    {
+        gpuResource = AttachGPUResource( resource );
+        if( !gpuResource )
+        {
+            return;
+        }
+        gpuResource->Create( resource );
+    }
+    gpuResource->Precompile( version );
 }
 
 void

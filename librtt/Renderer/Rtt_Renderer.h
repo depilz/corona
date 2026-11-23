@@ -169,6 +169,9 @@ class Renderer
         // next time a valid rendering context is available.
         void QueueCreate( CPUResource* resource );
 
+        // Creates the data's GPU resource now and builds the given variant; needs an active rendering context.
+        void Precompile( CPUResource* resource, U32 version );
+
         // Any GPU-side resources previously created for the given data will
         // be updated the next time a valid rendering context is available.
         void QueueUpdate( CPUResource* resource );
@@ -290,6 +293,7 @@ class Renderer
         void CheckAndInsertDrawCommand();
 
     private:
+        GPUResource* AttachGPUResource( CPUResource* resource );
         U32 EnumerateDirtyBlocks( ArrayS32& dirtyIndices );
         void UpdateDirtyBlocks( const ArrayS32& dirtyIndices, U32 largestDirtySize );
         void RestoreDefaultBlocks();

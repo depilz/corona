@@ -23,6 +23,7 @@
 
 #include "Renderer/Rtt_FormatExtensionList.h"
 #include "Renderer/Rtt_Program.h"
+#include "Renderer/Rtt_Renderer.h"
 #if defined( Rtt_USE_PRECOMPILED_SHADERS )
     #include "Renderer/Rtt_ShaderBinary.h"
     #include "Renderer/Rtt_ShaderBinaryVersions.h"
@@ -1182,6 +1183,16 @@ ShaderFactory::GatherEffectStubs( lua_State *L )
     return hasStubsTable;
 }
 
+static bool
+IsPrecompileOptedOut( lua_State *L, int kernelIndex )
+{
+    lua_getfield( L, kernelIndex, "precompile" );
+    bool isOptedOut = lua_isboolean( L, -1 ) && ! lua_toboolean( L, -1 );
+    lua_pop( L, 1 );
+
+    return isOptedOut;
+}
+
 bool
 ShaderFactory::DefineEffect( lua_State *L, int index )
 {
@@ -1249,6 +1260,11 @@ ShaderFactory::DefineEffect( lua_State *L, int index )
 				lua_pop( factoryL, 1 ); // pop registry table
 			}
 			lua_pop( factoryL, 1 ); // pop copied table
+
+			if ( ! IsPrecompileOptedOut( L, index ) )
+			{
+				Precompile( lua_pushfstring( L, "%s.%s", ShaderTypes::StringForCategory( category ), fullName ), NULL );
+			}
 		}
 		else
 		{
@@ -1368,6 +1384,177 @@ bool ShaderFactory::UndefineEffect( lua_State *L, int nameIndex )
     lua_pop( factoryL, 3 ); // (clear)
     
     return true;
+}
+
+bool
+ShaderFactory::PushKernel( ShaderTypes::Category category, const char *name )
+{
+    if ( ShaderTypes::kCategoryDefault == category )
+    {
+        return false;
+    }
+
+    lua_State *L = fL;
+
+    PushTable( L, ShaderBuiltin::KeyForCategory( category ) );
+    lua_getfield( L, -1, name );
+    lua_remove( L, -2 );
+
+    if ( ! lua_iscfunction( L, -1 ) )
+    {
+        lua_pop( L, 1 );
+
+        return false;
+    }
+
+    return 0 == Corona::Lua::DoCall( L, 0, 1 );
+}
+
+static bool
+IsDependencyMissing( lua_State *L, int kernelIndex, const char *field, void *cookie )
+{
+    lua_getfield( L, kernelIndex, field );
+
+    if ( ! lua_isstring( L, -1 ) )
+    {
+        lua_pop( L, 1 );
+
+        return false;
+    }
+
+    lua_pushlightuserdata( L, cookie );
+    lua_rawget( L, LUA_REGISTRYINDEX );
+
+    bool isMissing = true;
+
+    if ( lua_istable( L, -1 ) )
+    {
+        lua_pushvalue( L, -2 );
+        lua_rawget( L, -2 );
+        isMissing = lua_isnil( L, -1 );
+        lua_pop( L, 1 );
+    }
+
+    lua_pop( L, 2 );
+
+    return isMissing;
+}
+
+bool
+ShaderFactory::Precompile( const char *fullName, lua_State *warnL )
+{
+    std::set< std::string > visited;
+
+    return Precompile( fullName, warnL, visited );
+}
+
+bool
+ShaderFactory::Precompile( const char *fullName, lua_State *warnL, std::set< std::string >& visited )
+{
+    if ( ! visited.insert( fullName ).second )
+    {
+        return true;
+    }
+
+    lua_State *L = fL;
+
+    lua_checkstack( L, LUA_MINSTACK ); // graph nodes recurse here
+
+    ShaderName shaderName( fullName );
+
+    if ( ! PushKernel( shaderName.GetCategory(), shaderName.GetName() ) )
+    {
+        if ( warnL )
+        {
+            CoronaLuaWarning( warnL, "graphics.precompileEffects(): no effect named '%s'", fullName );
+        }
+
+        return false;
+    }
+
+    int kernelIndex = lua_gettop( L );
+
+    if ( ! warnL && IsPrecompileOptedOut( L, kernelIndex ) )
+    {
+        lua_pop( L, 1 );
+
+        return false;
+    }
+
+    bool result = true;
+
+    lua_getfield( L, kernelIndex, "graph" );
+
+    if ( lua_istable( L, -1 ) )
+    {
+        PrecompileGraphNodes( lua_gettop( L ), warnL, visited );
+    }
+    else if ( IsDependencyMissing( L, kernelIndex, "shellTransform", &sShellTransformCookie )
+              || IsDependencyMissing( L, kernelIndex, "vertexExtension", &sVertexExtensionCookie )
+              || IsDependencyMissing( L, kernelIndex, "dataType", &sDataTypeCookie ) )
+    {
+        if ( warnL )
+        {
+            CoronaLuaWarning( warnL, "graphics.precompileEffects(): '%s' names a shellTransform, vertexExtension or dataType that is not registered yet; it compiles at first use", fullName );
+        }
+
+        result = false;
+    }
+    else
+    {
+        PrecompilePrototype( shaderName.GetCategory(), shaderName.GetName() );
+    }
+
+    lua_pop( L, 2 );
+
+    return result;
+}
+
+void
+ShaderFactory::PrecompileGraphNodes( int graphIndex, lua_State *warnL, std::set< std::string >& visited )
+{
+    lua_State *L = fL;
+
+    lua_getfield( L, graphIndex, "nodes" );
+
+    if ( lua_istable( L, -1 ) )
+    {
+        for ( lua_pushnil( L ); lua_next( L, -2 ); lua_pop( L, 1 ) )
+        {
+            if ( ! lua_istable( L, -1 ) )
+            {
+                continue;
+            }
+
+            lua_getfield( L, -1, "effect" );
+
+            if ( LUA_TSTRING == lua_type( L, -1 ) )
+            {
+                Precompile( lua_tostring( L, -1 ), warnL, visited );
+            }
+
+            lua_pop( L, 1 );
+        }
+    }
+
+    lua_pop( L, 1 );
+}
+
+void
+ShaderFactory::PrecompilePrototype( ShaderTypes::Category category, const char *name )
+{
+    Shader *shader = FindOrLoad( category, name ); // a clone; its prototype stays registered
+
+    if ( ! shader )
+    {
+        return;
+    }
+
+    SharedPtr< ShaderResource > resource( shader->GetData()->GetShaderResource() );
+
+    fOwner.GetRenderer().Precompile( resource->GetProgramMod( ShaderResource::kDefault ), Program::kMaskCount0 );
+
+    Rtt_DELETE( shader );
 }
 
 void ShaderFactory::LoadDependency(LuaMap *nodeGraph, std::string nodeKey, ShaderMap &inputNodes, bool createNode, int localStubsIndex)

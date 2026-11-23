@@ -38,6 +38,7 @@ class GLProgram : public GPUResource
 		virtual void Create( CPUResource* resource );
 		virtual void Update( CPUResource* resource );
 		virtual void Destroy();
+		virtual void Precompile( U32 version );
 		virtual void Bind( Program::Version version );
 
 		// TODO: cleanup these functions

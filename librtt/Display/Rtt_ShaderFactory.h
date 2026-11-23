@@ -17,6 +17,9 @@
 #include "Display/Rtt_ShaderTypes.h"
 #include "Renderer/Rtt_Geometry_Renderer.h"
 
+#include <set>
+#include <string>
+
 // ----------------------------------------------------------------------------
 
 struct lua_State;
@@ -119,10 +122,18 @@ class ShaderFactory
         EffectInfo GetEffectInfo( const char * fullName );
     
         bool GatherEffectStubs( lua_State * L );
+
+        bool PushKernel( ShaderTypes::Category category, const char *name );
+        bool Precompile( const char *fullName, lua_State *warnL, std::set< std::string >& visited );
+        void PrecompileGraphNodes( int graphIndex, lua_State *warnL, std::set< std::string >& visited );
+        void PrecompilePrototype( ShaderTypes::Category category, const char *name );
     
 	public:
 		bool DefineEffect( lua_State *L, int shaderIndex );
         bool UndefineEffect( lua_State *L, int nameIndex );
+
+        // False when the name resolves to no effect or stays lazy; NULL warnL (defineEffect) is silent and skips precompile = false.
+        bool Precompile( const char *fullName, lua_State *warnL );
 
 		Shader *NewShaderGraph( lua_State *L, int index, int localStubsIndex );
         

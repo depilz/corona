@@ -95,6 +95,7 @@ class GraphicsLibrary
         static int newTexture( lua_State *L );
         static int releaseTextures( lua_State *L );
         static int undefineEffect( lua_State *L );
+        static int precompileEffects( lua_State *L );
         static int getFontMetrics( lua_State *L );
 
     private:
@@ -140,6 +141,7 @@ GraphicsLibrary::Open( lua_State *L )
         { "newTexture", newTexture },
         { "releaseTextures", releaseTextures },
         { "undefineEffect", undefineEffect },
+        { "precompileEffects", precompileEffects },
         { "getFontMetrics", getFontMetrics },
 
         { NULL, NULL }
@@ -1459,6 +1461,38 @@ GraphicsLibrary::undefineEffect( lua_State *L )
     ShaderFactory& factory = display.GetShaderFactory();
 
     lua_pushboolean( L, factory.UndefineEffect( L, index ) );
+
+    return 1;
+}
+
+// graphics.precompileEffects( names )
+int
+GraphicsLibrary::precompileEffects( lua_State *L )
+{
+    luaL_checktype( L, 1, LUA_TTABLE );
+
+    GraphicsLibrary *library = GraphicsLibrary::ToLibrary( L );
+    ShaderFactory& factory = library->GetDisplay().GetShaderFactory();
+
+    int count = 0;
+
+    for ( int i = 1, iMax = (int)lua_objlen( L, 1 ); i <= iMax; i++ )
+    {
+        lua_rawgeti( L, 1, i ); // name?
+
+        if ( LUA_TSTRING != lua_type( L, -1 ) )
+        {
+            CoronaLuaWarning( L, "graphics.precompileEffects(): expected an effect name at index %d, got %s", i, luaL_typename( L, -1 ) );
+        }
+        else if ( factory.Precompile( lua_tostring( L, -1 ), L ) )
+        {
+            count++;
+        }
+
+        lua_pop( L, 1 );
+    }
+
+    lua_pushinteger( L, count );
 
     return 1;
 }
