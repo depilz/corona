@@ -193,7 +193,8 @@ HRESULT STDMETHODCALLTYPE BitmapStream::Stat( __RPC__out STATSTG *pstatstg, DWOR
 
 WinFileBitmap::FileView::FileView()
 :	fMapping( NULL ),
-	fData( NULL )
+	fData( NULL ),
+	fSize( 0 )
 {
 }
 	
@@ -212,6 +213,8 @@ bool WinFileBitmap::FileView::Map( HANDLE hFile )
 
     if ( NULL != fData )
 	{
+		fSize = GetFileSize( hFile, 0 );
+
 		return true;
 	}
 
@@ -237,6 +240,7 @@ void WinFileBitmap::FileView::Close()
 
 	fMapping = NULL;
 	fData = NULL;
+	fSize = 0;
 }
 
 static U8* LockBitmapData( Rtt_Allocator& allocator, Gdiplus::Bitmap* src, U32* width, U32* height, const char* inPath )
@@ -312,6 +316,25 @@ FileFromPath( const char *inPath )
 }
 
 template<typename R, typename F>
+R* LoadBitmapDataFromMemory( void* data, U32 size, Rtt_Allocator &context, F && func, const char *inPath, U32* width, U32* height )
+{
+	BitmapStream* pStream = Rtt_NEW( context, BitmapStream( data, size ) );
+
+	if ( NULL == pStream )
+	{
+		Rtt_TRACE(( "LoadBitmapData: unable to create memory stream for '%S'\n", inPath ));
+
+		return NULL;
+	}
+
+	R* result = func( context, pStream, width, height, inPath );
+
+	pStream->Release();
+
+	return result;
+}
+
+template<typename R, typename F>
 R* LoadBitmapData( HANDLE hFile, Rtt_Allocator &context, F && func, const char *inPath, U32* width, U32* height, WinFileBitmap::FileView* pView = NULL )
 {
 	if (INVALID_HANDLE_VALUE == hFile)
@@ -324,7 +347,6 @@ R* LoadBitmapData( HANDLE hFile, Rtt_Allocator &context, F && func, const char *
 	WinFileBitmap::FileView view;
 
 	bool wasMapped = view.Map( hFile );
-	U32 size = GetFileSize( hFile, 0 );
 
 	CloseHandle( hFile );
 
@@ -335,21 +357,8 @@ R* LoadBitmapData( HANDLE hFile, Rtt_Allocator &context, F && func, const char *
 		return NULL;
 	}
 
-	R* result = NULL;
-	BitmapStream* pStream = Rtt_NEW( context, BitmapStream( view.fData, size ) );
+	R* result = LoadBitmapDataFromMemory<R>( view.fData, view.fSize, context, func, inPath, width, height );
 
-	if ( NULL != pStream )
-	{
-		result = func( context, pStream, width, height, inPath );
-
-		pStream->Release();
-	}
-
-	else
-	{
-		Rtt_TRACE(( "LoadBitmapData: unable to create memory stream for '%S'\n", inPath ));
-	}
-	
 	if ( NULL != result && NULL != pView )
 	{
 		*pView = view;
@@ -431,7 +440,7 @@ WinFileBitmap::WinFileBitmap( Rtt_Allocator &context )
 	: fPath(&context)
 #endif
 {
-	InitializeMembers();
+	InitializeMembers( context );
 }
 
 WinFileBitmap::WinFileBitmap( const char * inPath, Rtt_Allocator &context )
@@ -440,7 +449,7 @@ WinFileBitmap::WinFileBitmap( const char * inPath, Rtt_Allocator &context )
 #endif
 {
 	// Initialize all member variables.
-	InitializeMembers();
+	InitializeMembers( context );
 
 	// Load bitmap from file.
 	HANDLE global = NULL;
@@ -466,11 +475,15 @@ WinFileBitmap::~WinFileBitmap()
 	fView.Close();
 
 	Rtt_FREE( fData );
+	Rtt_FREE( fEncoded );
 }
 
 void
-WinFileBitmap::InitializeMembers()
+WinFileBitmap::InitializeMembers( Rtt_Allocator &context )
 {
+	fAllocator = &context;
+	fEncoded = NULL;
+	fEncodedSize = 0;
 	fScale = 1.0;
 	fOrientation = kUp;
 	fProperties = GetInitialPropertiesValue();
@@ -492,23 +505,77 @@ WinFileBitmap::CalculateScale() const
 
 
 void
-WinFileBitmap::Lock( Rtt_Allocator* context )
+WinFileBitmap::Lock( Rtt_Allocator* )
 {
-	if ( fBitmap == NULL )
+	if ( fData )
+	{
 		return;
+	}
 
-	fData = LockBitmapData( *context, fBitmap, &fWidth, &fHeight,
+	const char *path =
 	#ifdef Rtt_DEBUG
-		fPath.GetString() );
+		fPath.GetString();
 	#else
-		"?" );
+		"?";
 	#endif
+
+	if ( fBitmap == NULL )
+	{
+		fData = DecodeEncodedBytes( path );
+		return;
+	}
+
+	fData = LockBitmapData( *fAllocator, fBitmap, &fWidth, &fHeight, path );
+
+	if ( fData )
+	{
+		RetainEncodedBytes();
+	}
 
 	Rtt_DELETE( fBitmap );
 
 	fBitmap = NULL;
 
 	fView.Close();
+}
+
+void
+WinFileBitmap::RetainEncodedBytes()
+{
+	fEncoded = Rtt_MALLOC( *fAllocator, fView.fSize );
+
+	if ( NULL == fEncoded )
+	{
+		return;
+	}
+
+	memcpy( fEncoded, fView.fData, fView.fSize );
+	fEncodedSize = fView.fSize;
+}
+
+U8*
+WinFileBitmap::DecodeEncodedBytes( const char *path )
+{
+	if ( NULL == fEncoded )
+	{
+		return NULL;
+	}
+
+	return LoadBitmapDataFromMemory<U8>( fEncoded, fEncodedSize, *fAllocator, LoadMaskDataFromStream, path, &fWidth, &fHeight );
+}
+
+void
+WinFileBitmap::FreeBits() const
+{
+	// Without the encoded bytes the bits could not be rebuilt, so they are kept.
+	if ( NULL == fEncoded )
+	{
+		return;
+	}
+
+	Rtt_FREE( fData );
+
+	fData = NULL;
 }
 
 U32
