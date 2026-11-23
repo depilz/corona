@@ -652,7 +652,7 @@ WinFileGrayscaleBitmap::~WinFileGrayscaleBitmap()
 {
 	if (fData)
 	{
-		delete fData;
+		delete[] static_cast<U8*>( fData );
 		fData = nullptr;
 	}
 }
