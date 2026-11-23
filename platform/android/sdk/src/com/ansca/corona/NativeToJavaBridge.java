@@ -848,7 +848,7 @@ public class NativeToJavaBridge {
 		// Check if we have enough memory to load the image at full 32-bit color quality.
 		// If we don't have enough memory, then load the image at 16-bit quality.
 		// Note: We can't determine the memory usage of this app, so we have to guess based on the max JVM heap size.
-		long imagePixelCount = (originalWidth * originalHeight) / options.inSampleSize;
+		long imagePixelCount = ((long)originalWidth / options.inSampleSize) * ((long)originalHeight / options.inSampleSize);
 		long memoryUsage = imagePixelCount * 4;		// Calculate the image memory size of at a 32-bit color quality.
 		memoryUsage += 2000000;						// Add about 2 MB for other things this app may be using memory for.
 													// Note: This is a guess. We don't know how much memory the app is using.
@@ -895,7 +895,18 @@ public class NativeToJavaBridge {
 										"' as a 32-bit image. Reducing the image quality to 16-bit.");
 					System.gc();
 					options.inPreferredConfig = Bitmap.Config.RGB_565;
-					bitmap = BitmapFactory.decodeStream(stream, null, options);
+
+					// The failed decode consumed the stream, so reopen the file for the retry.
+					stream.close();
+					stream = fileServices.openFile(filePath);
+					if (stream != null) {
+						try {
+							bitmap = BitmapFactory.decodeStream(stream, null, options);
+						}
+						catch (OutOfMemoryError retryError) {
+							bitmap = null;
+						}
+					}
 				}
 				else {
 					throw memoryException;
@@ -908,9 +919,11 @@ public class NativeToJavaBridge {
 		catch (Exception ex) {
 			ex.printStackTrace();
 		}
-		try { stream.close(); }
-		catch (Exception ex) {
-			ex.printStackTrace();
+		if (stream != null) {
+			try { stream.close(); }
+			catch (Exception ex) {
+				ex.printStackTrace();
+			}
 		}
 		if (bitmap == null) {
 			Log.v("Corona", "Unable to decode file '" + filePath + "'");
