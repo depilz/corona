@@ -209,8 +209,8 @@ AndroidOperationResult AndroidNativePngDecoder::OnDecodeFrom(AndroidBinaryReader
 	}
 
 	// Downsample the image if it is larger than the given max width or height.
-	// Note: Downsampling involves skipping every other decoded pixel, which downscales
-	//       the image in powers of 2 in a fast and memory efficient manner.
+	// Note: Downsampling keeps every Nth decoded pixel and row, which downscales
+	//       the image by a whole number in a fast and memory efficient manner.
 	int targetPixelWidth = sourcePixelWidth;
 	int targetPixelHeight = sourcePixelHeight;
 	float scale = 1.0f;
@@ -218,11 +218,10 @@ AndroidOperationResult AndroidNativePngDecoder::OnDecodeFrom(AndroidBinaryReader
 	if (maxTargetPixelLength > 0)
 	{
 		int longestImageLength = (sourcePixelWidth > sourcePixelHeight) ? sourcePixelWidth : sourcePixelHeight;
-		float percentDelta = (float)longestImageLength / (float)maxTargetPixelLength;
-		while (percentDelta > 1.0f)
+		if (longestImageLength > maxTargetPixelLength)
 		{
-			pixelSampleFrequency++;
-			percentDelta /= 2.0f;
+			// Smallest whole factor that fits: ceil(longest / max).
+			pixelSampleFrequency = (longestImageLength + maxTargetPixelLength - 1) / maxTargetPixelLength;
 		}
 		if (pixelSampleFrequency > 1)
 		{
