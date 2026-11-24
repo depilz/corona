@@ -1216,15 +1216,15 @@ DisplayLibrary::newImage( lua_State *L )
 static void
 WarnIfOversizedImage( lua_State *L, const Display& display, BitmapPaint *paint, const char *imageName, MPlatform::Directory baseDir, Real w, Real h )
 {
+    // Canvas textures have no bitmap. The size test is written this way to also reject NaN.
     PlatformBitmap *bitmap = paint->GetBitmap();
-    Texture *texture = paint->GetTexture();
-    if ( w <= Rtt_REAL_0 || h <= Rtt_REAL_0 || ( ! bitmap && ! texture ) )
+    if ( ! bitmap || ! ( w > Rtt_REAL_0 && h > Rtt_REAL_0 ) )
     {
         return;
     }
 
-    const U32 bitmapWidth = bitmap ? bitmap->UprightWidth() : texture->GetWidth();
-    const U32 bitmapHeight = bitmap ? bitmap->UprightHeight() : texture->GetHeight();
+    const U32 bitmapWidth = bitmap->UprightWidth();
+    const U32 bitmapHeight = bitmap->UprightHeight();
     if ( Max( bitmapWidth, bitmapHeight ) < 256 )
     {
         return;
