@@ -80,7 +80,7 @@ class ShaderFactory
 				const char *kernelFrag,
                 int localStubsIndex );
 #endif
-        Shader *NewShaderPrototype( lua_State *L, int index, const SharedPtr< ShaderResource >& resource );
+        Shader *NewShaderPrototype( lua_State *L, int index, const SharedPtr< ShaderResource >& resource, int localStubsIndex );
 
     private:
         // Helper methods to instantiate Shader
@@ -103,7 +103,7 @@ class ShaderFactory
 	protected:
 //		Shader *NewShader( lua_State *L, int index );
 		ShaderComposite *NewShaderBuiltin( ShaderTypes::Category category, const char *name, int localStubsIndex );
-		void AddShader( Shader *shader, const char *name );
+		void AddShader( Shader *shader, const char *name, int localStubsIndex );
 		
 		void LoadDependency(LuaMap *nodeGraph, std::string nodeKey, ShaderMap &inputNodes, bool createNode, int localStubsIndex );
 		void ConnectLocalNodes(ShaderMap &inputNodes, LuaMap *nodeGraph, std::string terminalNodeKey, ShaderComposite *terminalNode);
