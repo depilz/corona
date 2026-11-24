@@ -2028,6 +2028,10 @@ DisplayLibrary::getDefault( lua_State *L )
     {
         lua_pushinteger( L, defaults.GetAddedStencilClearValue() );
     }
+    else if ( ( Rtt_StringCompare( key, "preloadBudget" ) == 0 ) )
+    {
+        lua_pushnumber( L, defaults.GetPreloadBudget() );
+    }
     else if ( key )
     {
         luaL_error( L, "ERROR: display.getDefault() given invalid key (%s)", key );
@@ -2123,6 +2127,19 @@ DisplayLibrary::setDefault( lua_State *L )
         bool preloadTextures = lua_toboolean( L, index );
     
         defaults.SetPreloadTextures( preloadTextures );
+    }
+    else if ( Rtt_StringCompare( key, "preloadBudget" ) == 0 )
+    {
+        const lua_Number kMaxBudget = 4294967295.0;
+        lua_Number bytes = lua_tonumber( L, index );
+
+        // NaN fails the comparison too, so it also turns the budget off
+        U32 budget = 0;
+        if ( bytes >= 1 )
+        {
+            budget = (U32)( bytes < kMaxBudget ? bytes : kMaxBudget );
+        }
+        defaults.SetPreloadBudget( budget );
     }
     else if ( Rtt_StringCompare( key, "cameraSource" ) == 0 )
     {

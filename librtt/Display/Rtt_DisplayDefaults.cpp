@@ -68,7 +68,8 @@ DisplayDefaults::DisplayDefaults()
     fSceneDepthClear( 1.0 ),
     fAddedDepthClear( 1.0 ),
     fSceneStencilClear( 0 ),
-    fAddedStencilClear( 0 )
+    fAddedStencilClear( 0 ),
+    fPreloadBudget( 0 )
 {
 	Rtt_STATIC_ASSERT( sizeof(fExtraSpace) >= sizeof(ExtraSpace) );
 	Rtt_STATIC_ASSERT( std::is_trivially_destructible<ExtraSpace>::value );

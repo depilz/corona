@@ -80,6 +80,10 @@ class DisplayDefaults
         
         bool ShouldPreloadTextures() const { return fPreloadTextures; }
         void SetPreloadTextures( bool newValue ) { fPreloadTextures = newValue; }
+
+        // Bytes of preloaded textures to create per frame. 0 means no limit.
+        U32 GetPreloadBudget() const { return fPreloadBudget; }
+        void SetPreloadBudget( U32 newValue ) { fPreloadBudget = newValue; }
     
         bool IsNativeTextFieldFontSizeScaled() const { return fIsNativeTextFieldFontSizeScaled; }
         void SetIsNativeTextFieldFontSizeScaled( bool value ) { fIsNativeTextFieldFontSizeScaled = value; }
@@ -154,6 +158,7 @@ class DisplayDefaults
         float fAddedDepthClear;
         U32 fSceneStencilClear;
         U32 fAddedStencilClear;
+        U32 fPreloadBudget;
         U8 fExtraSpace[32]; // Avoid some up-front dependencies
 };
 

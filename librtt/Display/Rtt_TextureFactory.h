@@ -43,6 +43,9 @@ class TextureFactory
 
 		void Preload( Renderer& renderer );
 
+		// Returns true if there are textures left to preload in later frames.
+		bool PreloadWithinBudget( Renderer& renderer, U32 budget );
+
 	protected:
 		void PathForFile(
 			String& filePath,
@@ -54,6 +57,7 @@ class TextureFactory
 			U32 flags = 0, bool convertToGrayscale = false );
 
 		SharedPtr< TextureResource > Find( const std::string& key );
+		bool IsInPreloadQueue( const SharedPtr< TextureResource > &resource ) const;
 		SharedPtr< TextureResource > CreateAndAdd( const std::string& key,
 													PlatformBitmap *bitmap,
 													bool useCache,

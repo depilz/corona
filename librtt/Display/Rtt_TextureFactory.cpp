@@ -37,6 +37,11 @@ namespace Rtt
 
 // ----------------------------------------------------------------------------
 
+// Every upload has a fixed cost, so a small texture counts as this many bytes of the preload budget.
+static const size_t kMinPreloadCharge = 256 * 1024;
+
+// ----------------------------------------------------------------------------
+
 TextureFactory::TextureFactory( Display& display )
 :	fCache(),
 	fDisplay( display ),
@@ -168,14 +173,34 @@ TextureFactory::Find( const std::string& key )
 	
 void TextureFactory::AddToPreloadQueue(SharedPtr< TextureResource > &resource)
 {
-	fCreateQueue.Append( resource );
+	const bool isPending = resource.NotNull() && NULL == resource->GetTexture().GetGPUResource();
+	const bool hasBudget = fDisplay.GetDefaults().GetPreloadBudget() > 0;
+
+	// With a budget, entries stay for several frames. Keep only one for each pending texture.
+	if ( ! hasBudget || ( isPending && ! IsInPreloadQueue( resource ) ) )
+	{
+		fCreateQueue.Append( resource );
+	}
 
 	// The queue is only drained while a frame is rendered, and a scene with no changes
 	// is not rendered. Mark it dirty so a preload also happens on a static screen.
-	if ( resource.NotNull() && NULL == resource->GetTexture().GetGPUResource() )
+	if ( isPending )
 	{
 		fDisplay.GetScene().Invalidate();
 	}
+}
+
+bool
+TextureFactory::IsInPreloadQueue( const SharedPtr< TextureResource > &resource ) const
+{
+	for ( int i = 0; i < fCreateQueue.Length(); i++ )
+	{
+		if ( SharedPtr< TextureResource >( fCreateQueue[i] ) == resource )
+		{
+			return true;
+		}
+	}
+	return false;
 }
 	
 void TextureFactory::AddToPreloadQueueByKey(std::string cacheKey)
@@ -235,6 +260,61 @@ TextureFactory::Preload( Renderer& renderer )
 		}
 	}
 	fCreateQueue.Empty();
+}
+
+static U64
+GetPreloadCharge( const TextureResource& resource )
+{
+	return Max( resource.GetTexture().GetSizeInBytes(), kMinPreloadCharge );
+}
+
+// Called after the scene is drawn, so the textures created for drawing use up the budget first.
+bool
+TextureFactory::PreloadWithinBudget( Renderer& renderer, U32 budget )
+{
+	// The sum of the charges can be larger than 32 bits
+	U64 spent = 0;
+	for ( int i = 0; i < fCreateQueue.Length(); i++ )
+	{
+		SharedPtr< TextureResource > resource( fCreateQueue[i] );
+		if ( resource.NotNull() && NULL != resource->GetTexture().GetGPUResource() )
+		{
+			spent += GetPreloadCharge( *resource );
+		}
+	}
+
+	// Create in order until a texture doesn't fit. Only a texture that is first in its frame may
+	// exceed the budget. All others stay in the queue, in order, and finished entries are dropped.
+	int numPending = 0;
+	for ( int i = 0; i < fCreateQueue.Length(); i++ )
+	{
+		SharedPtr< TextureResource > resource( fCreateQueue[i] );
+		if ( resource.IsNull() || NULL != resource->GetTexture().GetGPUResource() )
+		{
+			continue;
+		}
+
+		const U64 charge = GetPreloadCharge( *resource );
+		const bool fits = ( 0 == spent || spent + charge <= budget );
+		if ( 0 == numPending && fits )
+		{
+			renderer.QueueCreate( & resource->GetTexture() );
+			spent += charge;
+		}
+		else
+		{
+			fCreateQueue[numPending] = fCreateQueue[i];
+			numPending++;
+		}
+	}
+
+	const int numFinished = fCreateQueue.Length() - numPending;
+	if ( numFinished > 0 )
+	{
+		fCreateQueue.Remove( numPending, numFinished );
+	}
+
+	return numPending > 0;
 }
 
 SharedPtr< TextureResource >
