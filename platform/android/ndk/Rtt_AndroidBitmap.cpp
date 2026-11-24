@@ -121,11 +121,11 @@ AndroidAssetBitmap::GetBits( Rtt_Allocator *context ) const
 	const void *bits = Super::GetBits(context);
 	if (!bits)
 	{
-		// A decode worker must not raise Lua errors and has no Java fallback. It runs the native
-		// PNG decoder, or Java for a JPEG; when it fails, the bitmap stays undecoded and the next
-		// GetBits() on a thread that is not a worker runs the whole path. The GL thread can change while the
+		// A decode job must not raise Lua errors, on whichever thread it runs, and has no Java fallback.
+		// It runs the native PNG decoder, or Java for a JPEG; when it fails, the bitmap stays undecoded
+		// and the next GetBits() outside a job runs the whole path. The GL thread can change while the
 		// runtime lives, so do not compare with the thread that built the bitmap.
-		if (!WorkerPool::IsWorkerThread())
+		if (!WorkerPool::IsRunningJob())
 		{
 			fImageDecoder.DecodeFromFile(fPath.GetString());
 		}

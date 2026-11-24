@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <stddef.h>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -76,9 +77,9 @@ class WorkerPool
 			return spare < kMaxWorkers ? spare : kMaxWorkers;
 		}
 
-		// True on the worker threads of any pool. A thread that runs a job
-		// through Wait() does not become a worker.
-		static bool IsWorkerThread() { return WorkerThreadMark(); }
+		// True while the calling thread runs a job of any pool, on a worker or
+		// through Wait().
+		static bool IsRunningJob() { return RunningJobMark(); }
 
 	public:
 		// The hooks run on each worker thread right after it starts and right
@@ -173,10 +174,10 @@ class WorkerPool
 		static const bool kThreadsAvailable = true;
 #endif
 
-		static bool& WorkerThreadMark()
+		static bool& RunningJobMark()
 		{
-			static thread_local bool sIsWorkerThread = false;
-			return sIsWorkerThread;
+			static thread_local bool sIsRunningJob = false;
+			return sIsRunningJob;
 		}
 
 		// Caller holds fMutex.
@@ -186,6 +187,17 @@ class WorkerPool
 			{
 				return;
 			}
+#if defined( __cpp_exceptions ) || defined( _CPPUNWIND )
+			try { StartWorkers(); }
+			catch ( const std::system_error& ) {} // Go on with the workers that did start
+#else
+			StartWorkers();
+#endif
+		}
+
+		// Caller holds fMutex.
+		void StartWorkers()
+		{
 			for ( unsigned i = 0; i < fWorkerCount; i++ )
 			{
 				fWorkers.push_back( std::thread( &WorkerPool::RunWorker, this ) );
@@ -213,7 +225,10 @@ class WorkerPool
 			task->fState = kRunning;
 			++fRunningCount;
 			lock.unlock();
+			const bool wasRunningJob = RunningJobMark();
+			RunningJobMark() = true;
 			task->fJob();
+			RunningJobMark() = wasRunningJob;
 			task->fJob = Job();
 			lock.lock();
 			--fRunningCount;
@@ -249,7 +264,6 @@ class WorkerPool
 
 		void RunWorker()
 		{
-			WorkerThreadMark() = true;
 			if ( fOnThreadStart ) { fOnThreadStart(); }
 
 			std::unique_lock< std::mutex > lock( fMutex );

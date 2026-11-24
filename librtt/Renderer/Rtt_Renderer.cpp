@@ -39,8 +39,10 @@
 
 #define ENABLE_DEBUG_PRINT	0
 
+#include <deque>
 #include <limits>
 #include <set>
+#include <utility>
 #include <vector>
 
 #if defined( Rtt_ANDROID_ENV )
@@ -165,13 +167,17 @@ WantsDecodeAhead( const LightPtrArray<CPUResource>& queue )
 	return false;
 }
 
-// Decodes the lazy textures of one Swap's create queue ahead of the create loop:
-// eligible ones on the pool, the others inline on the render thread. Textures are
+// Decodes the eligible lazy textures of one Swap's create queue on the pool, ahead
+// of the create loop; the other lazy ones decode in their Create(). All are
 // admitted strictly in queue order under the decoded-bytes cap, reserved at
 // admission and released once created. Render thread only.
 //
+// A Lua error raised by Create() (a Java exception on Android, a plugin callback)
+// longjmps past Swap and would leave jobs decoding textures that Lua may free. So
+// with jobs outstanding only already decoded textures are created.
+//
 // Reservations never pass the cap (an over-cap image is admitted alone), since
-// inline images wait for their turn like eligible ones. Decoded pixels can pass
+// the other images wait for their turn like eligible ones. Decoded pixels can pass
 // it transiently by one image: Create() still decodes, on the render thread, an
 // image the cap does not count (a text bitmap, whose size is unknown before
 // drawing) while admitted images are in flight. That overshoot is accepted.
@@ -190,7 +196,6 @@ class DecodeAhead
 		{
 			Slot() : fBytes( 0 ), fPushed( false ), fAdmitted( false ), fOffThread( false ) {}
 
-			WorkerPool::Ticket fTicket;
 			size_t fBytes;
 			bool fPushed;
 			bool fAdmitted;
@@ -198,12 +203,14 @@ class DecodeAhead
 		};
 
 		void Admit();
+		void WaitFirst();
 
 	private:
 		WorkerPool& fPool;
 		const LightPtrArray<CPUResource>& fQueue;
 		AdmissionQueue< S32 > fAdmission;
 		std::vector< Slot > fSlots; // One per create queue entry
+		std::deque< std::pair< S32, WorkerPool::Ticket > > fOutstanding; // In queue order
 };
 
 DecodeAhead::DecodeAhead( WorkerPool& pool, const LightPtrArray<CPUResource>& queue )
@@ -232,14 +239,19 @@ DecodeAhead::DecodeAhead( WorkerPool& pool, const LightPtrArray<CPUResource>& qu
 void
 DecodeAhead::BeforeCreate( S32 index )
 {
-	Slot& slot = fSlots[index];
+	const Slot& slot = fSlots[index];
 
 	// Everything before index was released, so index was admitted by now
 	Rtt_ASSERT( ! slot.fPushed || slot.fAdmitted );
-	if ( slot.fTicket )
+	if ( ! fOutstanding.empty() && index == fOutstanding.front().first )
 	{
-		fPool.Wait( slot.fTicket );
-		slot.fTicket.reset();
+		WaitFirst();
+	}
+
+	const bool isDecoded = slot.fPushed && ! AsTexture( fQueue[index] )->IsLazyUndecoded();
+	if ( ! isDecoded )
+	{
+		Drain();
 	}
 }
 
@@ -258,21 +270,22 @@ DecodeAhead::AfterCreate( S32 index )
 void
 DecodeAhead::Drain()
 {
-	for ( size_t i = 0; i < fSlots.size(); i++ )
+	while ( ! fOutstanding.empty() )
 	{
-		if ( fSlots[i].fTicket )
-		{
-			fPool.Wait( fSlots[i].fTicket );
-			fSlots[i].fTicket.reset();
-		}
+		WaitFirst();
 	}
 }
 
-// Submits the eligible images first, so the inline ones decode while the workers do
+void
+DecodeAhead::WaitFirst()
+{
+	fPool.Wait( fOutstanding.front().second );
+	fOutstanding.pop_front();
+}
+
 void
 DecodeAhead::Admit()
 {
-	std::vector< S32 > inlineIndices;
 	S32 index;
 	size_t bytes;
 	while ( fAdmission.AdmitNext( index, bytes ) )
@@ -282,16 +295,8 @@ DecodeAhead::Admit()
 		if ( slot.fOffThread )
 		{
 			const Texture* texture = AsTexture( fQueue[index] );
-			slot.fTicket = fPool.Submit( [texture]{ texture->Prefetch(); }, bytes );
+			fOutstanding.push_back( std::make_pair( index, fPool.Submit( [texture]{ texture->Prefetch(); }, bytes ) ) );
 		}
-		else
-		{
-			inlineIndices.push_back( index );
-		}
-	}
-	for ( size_t i = 0; i < inlineIndices.size(); i++ )
-	{
-		AsTexture( fQueue[inlineIndices[i]] )->Prefetch();
 	}
 }
 
