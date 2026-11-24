@@ -393,9 +393,10 @@ ShaderFactory::NewShaderResource(
 
 // This is an internal factory method:
 // * it creates the full-loaded prototype
-// * it adds it into the registry, so subsequent calls to FindPrototype() succeed
+// * it adds it into the registry (or the local stub, if localStubsIndex != 0), so
+//   subsequent calls to FindPrototype() succeed
 Shader *
-ShaderFactory::NewShaderPrototype( lua_State *L, int index, const SharedPtr< ShaderResource >& resource )
+ShaderFactory::NewShaderPrototype( lua_State *L, int index, const SharedPtr< ShaderResource >& resource, int localStubsIndex )
 {
     // index for table that defines the shader
     // This also inits the resource's defaultData, so need to do this before we create the Shader
@@ -409,7 +410,7 @@ ShaderFactory::NewShaderPrototype( lua_State *L, int index, const SharedPtr< Sha
     ShaderComposite *comp = Rtt_NEW( fAllocator, ShaderComposite(fAllocator, resource, data ) );
     result = comp;
     
-    AddShader( result, resource->GetName().c_str() );
+    AddShader( result, resource->GetName().c_str(), localStubsIndex );
 
     return result;
 }
@@ -967,6 +968,8 @@ ShaderFactory::NewShaderBuiltin( ShaderTypes::Category category, const char *nam
                 if (!f)
                 {
                     lua_pop( L, 1 ); // (clear)
+
+                    localStubsIndex = 0; // not undefined, so use the public effect
                 }
             }
 
@@ -1019,7 +1022,7 @@ ShaderFactory::NewShaderBuiltin( ShaderTypes::Category category, const char *nam
                             if (resource.NotNull())
                             {
 								Shader *prototype = NULL;
-								prototype = NewShaderPrototype( L, tableIndex, resource );
+								prototype = NewShaderPrototype( L, tableIndex, resource, localStubsIndex );
 								result = (ShaderComposite*)prototype->Clone( fAllocator );
 							}
 						}
@@ -1055,13 +1058,27 @@ ShaderFactory::NewShaderBuiltin( ShaderTypes::Category category, const char *nam
 }
 
 void
-ShaderFactory::AddShader( Shader *shader, const char *name )
+ShaderFactory::AddShader( Shader *shader, const char *name, int localStubsIndex )
 {
     const char *categoryName = ShaderTypes::StringForCategory( shader->GetCategory() );
 
-    // Store shader in Lua registry
     // NOTE: Lua will own the shader instance
     lua_State *L = fL;
+
+    // Store a shader rebuilt from a stub in that stub: its public name is
+    // undefined, or already belongs to a redefinition
+    if (localStubsIndex)
+    {
+        lua_getfield( L, localStubsIndex, categoryName ); // categoryLocalStubs
+        lua_getfield( L, -1, name ); // categoryLocalStubs, stub
+        CoronaLuaPushUserdata( L, shader, kMetatableName ); // categoryLocalStubs, stub, shader
+        lua_setfield( L, -2, "prototype" ); // categoryLocalStubs, stub = { kernel = kernel, prototype = shader }
+        lua_pop( L, 2 ); // (clear)
+
+        return;
+    }
+
+    // Store shader in Lua registry
     PushTable( L, categoryName ); // push registry[categoryName]
     {
         CoronaLuaPushUserdata( L, shader, kMetatableName ); // push shader
@@ -1842,6 +1859,18 @@ ShaderFactory::FindPrototype( ShaderTypes::Category category, const char *name, 
                     exists = lua_iscfunction( L, -1 );
                     
                     lua_pop( L, 1 ); // categoryLocalStubs, stub
+
+                    if (exists)
+                    {
+                        lua_getfield( L, -1, "prototype" ); // categoryLocalStubs, stub, prototype?
+
+                        if (lua_isuserdata( L, -1 )) // already rebuilt?
+                        {
+                            result = (const Shader *)CoronaLuaToUserdata( L, -1 );
+                        }
+
+                        lua_pop( L, 1 ); // categoryLocalStubs, stub
+                    }
                 }
                 
                 lua_pop( L, 1 ); // categoryLocalStubs
@@ -1851,7 +1880,7 @@ ShaderFactory::FindPrototype( ShaderTypes::Category category, const char *name, 
             
             if (exists) // replacement effect found?
             {
-                return NULL;
+                return result;
             }
         }
 
