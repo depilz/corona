@@ -22,14 +22,16 @@
 /// Creates a new image decoder.
 /// @param allocatorPointer Allocator this decoder needs to creates its objects. Cannot be NULL.
 AndroidJavaImageDecoder::AndroidJavaImageDecoder(Rtt_Allocator *allocatorPointer, NativeToJavaBridge *ntjb)
-:	AndroidBaseImageDecoder(allocatorPointer), fNativeToJavaBridge(ntjb)
+:	AndroidBaseImageDecoder(allocatorPointer), fNativeToJavaBridge(ntjb), fCanRaiseLuaError(true)
 {
 }
 
 /// Creates a new image decoder with settings copied from the given decoder.
 /// @param decoder The decoder to copy settings from.
-AndroidJavaImageDecoder::AndroidJavaImageDecoder(const AndroidBaseImageDecoder &decoder, NativeToJavaBridge *ntjb)
-:	AndroidBaseImageDecoder(decoder), fNativeToJavaBridge(ntjb)
+/// @param canRaiseLuaError Set false when decoding off the Lua thread, so that a Java exception
+///                         fails the decode instead of raising a Lua error.
+AndroidJavaImageDecoder::AndroidJavaImageDecoder(const AndroidBaseImageDecoder &decoder, NativeToJavaBridge *ntjb, bool canRaiseLuaError)
+:	AndroidBaseImageDecoder(decoder), fNativeToJavaBridge(ntjb), fCanRaiseLuaError(canRaiseLuaError)
 {
 }
 
@@ -62,7 +64,7 @@ AndroidOperationResult AndroidJavaImageDecoder::OnDecodeFromFile(const char *fil
 	bool convertToGrayscale = IsPixelFormatGrayscale();
 	bool wasLoaded = fNativeToJavaBridge->LoadImage(
 							filePath, *imageDataPointer, convertToGrayscale,
-							(int)GetMaxWidth(), (int)GetMaxHeight(), IsDecodingImageInfoOnly());
+							(int)GetMaxWidth(), (int)GetMaxHeight(), IsDecodingImageInfoOnly(), fCanRaiseLuaError);
 	if (!wasLoaded)
 	{
 		char message[512];

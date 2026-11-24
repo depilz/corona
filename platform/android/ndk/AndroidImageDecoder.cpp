@@ -28,6 +28,7 @@ AndroidImageDecoder::AndroidImageDecoder(Rtt_Allocator *allocatorPointer, Native
 :	AndroidBaseImageDecoder(allocatorPointer),
 	fNativeToJavaBridge(ntjb),
 	fFileLocation(kUnresolved),
+	fIsJpegFile(false),
 	fPackageEntry(allocatorPointer)
 {
 }
@@ -47,10 +48,12 @@ AndroidImageDecoder::~AndroidImageDecoder()
 /// Binds this decoder to the given file: every later decode is expected to be given the same path.
 /// The location is kept only if the native PNG decoder can read the file as is, which is
 /// a plain file or an uncompressed entry within the APK or expansion file.
+/// A JPEG file is noted instead, since only Java decodes it.
 /// Must be called on a thread attached to the Java VM.
 /// @param filePath The name and path of the image file. Cannot be NULL or empty.
 void AndroidImageDecoder::ResolveFileLocation(const char *filePath)
 {
+	fIsJpegFile = Rtt_StringEndsWithNoCase(filePath, ".jpg") || Rtt_StringEndsWithNoCase(filePath, ".jpeg");
 	if (!Rtt_StringEndsWithNoCase(filePath, ".png"))
 	{
 		return;
@@ -92,6 +95,36 @@ AndroidOperationResult AndroidImageDecoder::DecodeNativelyFromFile(const char *f
 
 	AndroidNativePngDecoder pngDecoder(*this, fNativeToJavaBridge);
 	return pngDecoder.DecodeFromResolvedFile(filePath, (kPackageEntry == fFileLocation) ? &fPackageEntry : NULL);
+}
+
+/// Determines if DecodeOffThreadFromFile() can decode the file given to ResolveFileLocation().
+/// @return Returns true if CanDecodeNatively() returns true or if the file is a JPEG.
+bool AndroidImageDecoder::CanDecodeOffThread() const
+{
+	return CanDecodeNatively() || fIsJpegFile;
+}
+
+/// Decodes the file given to ResolveFileLocation() on a thread that does not run Lua.
+/// <br>
+/// A PNG is decoded as by DecodeNativelyFromFile(). A JPEG is decoded by Java on the calling thread,
+/// which gets attached to the Java VM until it exits; a Java exception fails the decode
+/// instead of raising a Lua error.
+/// @param filePath The name and path of the image file given to ResolveFileLocation().
+/// @return Returns the result of the image decoding operation, as described by OnDecodeFromFile().
+///         Fails if CanDecodeOffThread() returns false.
+AndroidOperationResult AndroidImageDecoder::DecodeOffThreadFromFile(const char *filePath)
+{
+	if (CanDecodeNatively())
+	{
+		return DecodeNativelyFromFile(filePath);
+	}
+	if (!fIsJpegFile || !NativeToJavaBridge::AttachCurrentThread())
+	{
+		return AndroidOperationResult::FailedWith(GetAllocator(), "Image file cannot be decoded off the Lua thread.");
+	}
+
+	AndroidJavaImageDecoder javaImageDecoder(*this, fNativeToJavaBridge, false);
+	return javaImageDecoder.DecodeFromFile(filePath);
 }
 
 

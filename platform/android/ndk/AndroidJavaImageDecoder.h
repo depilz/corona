@@ -24,7 +24,7 @@ class AndroidJavaImageDecoder : public AndroidBaseImageDecoder
 {
 	public:
 		AndroidJavaImageDecoder(Rtt_Allocator *allocatorPointer, NativeToJavaBridge *ntjb);
-		AndroidJavaImageDecoder(const AndroidBaseImageDecoder &decoder, NativeToJavaBridge *ntjb);
+		AndroidJavaImageDecoder(const AndroidBaseImageDecoder &decoder, NativeToJavaBridge *ntjb, bool canRaiseLuaError = true);
 		virtual ~AndroidJavaImageDecoder();
 
 	protected:
@@ -32,6 +32,7 @@ class AndroidJavaImageDecoder : public AndroidBaseImageDecoder
 
 	private:
 		NativeToJavaBridge *fNativeToJavaBridge;
+		bool fCanRaiseLuaError;
 };
 
 #endif // _AndroidJavaImageDecoder_H__

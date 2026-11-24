@@ -60,6 +60,7 @@ class NativeToJavaBridge
 	public:
 		static void* JavaToNative( jpointer p );
 		static NativeToJavaBridge * InitInstance( JNIEnv *env, Rtt::Runtime *runtime, jobject coronaRuntime );
+		static bool AttachCurrentThread();
 		// static NativeToJaaBridge *GetInstance();
 		static DictionaryRef DictionaryCreate( lua_State *L, int t, NativeToJavaBridge *bridge );
 
@@ -95,7 +96,7 @@ class NativeToJavaBridge
 		static bool GetAssetFileLocation( const char * assetName, AndroidZipFileEntry &zipFileEntry );
 		bool LoadImage(
 				const char *filePath, AndroidImageData& imageData, bool convertToGrayscale,
-				int maxWidth, int maxHeight, bool loadImageInfoOnly);
+				int maxWidth, int maxHeight, bool loadImageInfoOnly, bool canRaiseLuaError);
 		bool SaveImageToPhotoLibrary( const char *fileName );
 		bool SaveBitmap( const Rtt::PlatformBitmap * bitmap, const char * path, int quality );
 	
@@ -315,6 +316,7 @@ class NativeToJavaBridge
 
 	private:
 		static JavaVM *fVM;
+		static jclass fBridgeClass;
 		Rtt::Runtime *fRuntime;
 		// bool fHasLuaErrorOccurred;
 		Rtt::LuaResource *fAlertCallbackResource;

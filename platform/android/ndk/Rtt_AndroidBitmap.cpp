@@ -121,14 +121,14 @@ AndroidAssetBitmap::GetBits( Rtt_Allocator *context ) const
 	const void *bits = Super::GetBits(context);
 	if (!bits)
 	{
-		// JNI, Lua and the Java fallback belong to the creating thread. A decode worker
-		// runs the native decoder only; when it fails, the bitmap stays undecoded
-		// and the creating thread's next GetBits() runs the whole path.
+		// Lua errors and the Java fallback belong to the creating thread. A decode worker
+		// runs the native PNG decoder, or Java for a JPEG without raising Lua errors; when it fails,
+		// the bitmap stays undecoded and the creating thread's next GetBits() runs the whole path.
 		if (pthread_equal(pthread_self(), fCreatingThread))
 		{
 			fImageDecoder.DecodeFromFile(fPath.GetString());
 		}
-		else if (fImageDecoder.DecodeNativelyFromFile(fPath.GetString()).HasFailed())
+		else if (fImageDecoder.DecodeOffThreadFromFile(fPath.GetString()).HasFailed())
 		{
 			fImageData.DestroyImageByteBuffer();
 		}
@@ -146,7 +146,7 @@ AndroidAssetBitmap::IsLazyUndecoded() const
 bool
 AndroidAssetBitmap::CanDecodeOffThread() const
 {
-	return fImageDecoder.CanDecodeNatively();
+	return fImageDecoder.CanDecodeOffThread();
 }
 
 AndroidImageDecoder&

@@ -32,6 +32,8 @@ class AndroidImageDecoder : public AndroidBaseImageDecoder
 		void ResolveFileLocation(const char *filePath);
 		bool CanDecodeNatively() const;
 		AndroidOperationResult DecodeNativelyFromFile(const char *filePath);
+		bool CanDecodeOffThread() const;
+		AndroidOperationResult DecodeOffThreadFromFile(const char *filePath);
 
 	protected:
 		AndroidOperationResult OnDecodeFromFile(const char *filePath);
@@ -46,6 +48,7 @@ class AndroidImageDecoder : public AndroidBaseImageDecoder
 
 		NativeToJavaBridge *fNativeToJavaBridge;
 		FileLocation fFileLocation;
+		bool fIsJpegFile;
 		AndroidZipFileEntry fPackageEntry;
 };
 
