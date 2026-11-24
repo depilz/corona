@@ -50,6 +50,14 @@ class CommandBuffer
 			kNumQueryableParams,
 		}
 		QueryableParams;
+
+		typedef enum _MipmapSupport
+		{
+			kMipmapsNone = 0,
+			kMipmapsPowerOf2Only,
+			kMipmapsAnySize
+		}
+		MipmapSupport;
 	
 	public:
 		void ReadBytes( void * value, size_t size );
@@ -59,6 +67,7 @@ class CommandBuffer
 		static size_t GetMaxUniformVectorsCount();
 		static size_t GetMaxVertexTextureUnits();
 		static size_t GetMaxTextureSize();
+		static bool SupportsMipmaps( U32 width, U32 height );
 		static const char *GetGlString( const char *s );
 		static bool GetGpuSupportsHighPrecisionFragmentShaders();
 
@@ -133,6 +142,8 @@ class CommandBuffer
         virtual void CacheQueryParam( CommandBuffer::QueryableParams param ) = 0;
 
     protected:
+        static MipmapSupport sMipmapSupport;
+
         Rtt_Allocator* fAllocator;
         U8* fBuffer;
         U8* fOffset;

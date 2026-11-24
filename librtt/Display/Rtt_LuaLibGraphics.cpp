@@ -1142,7 +1142,7 @@ SharedPtr<TextureResource> CreateResourceBitmapFromTable(Rtt::TextureFactory &fa
 {
     SharedPtr<TextureResource> ret;
     
-    const U32 flags = PlatformBitmap::kIsNearestAvailablePixelDensity | PlatformBitmap::kIsBitsFullResolution;
+    U32 flags = PlatformBitmap::kIsNearestAvailablePixelDensity | PlatformBitmap::kIsBitsFullResolution;
     
     lua_getfield( L, index, "baseDir" );
     MPlatform::Directory baseDir = LuaLibSystem::ToDirectory( L, -1, MPlatform::kResourceDir );
@@ -1152,6 +1152,13 @@ SharedPtr<TextureResource> CreateResourceBitmapFromTable(Rtt::TextureFactory &fa
     bool isMask = lua_isboolean( L, -1 ) && lua_toboolean( L, -1 );
     lua_pop( L, 1 );
     
+    lua_getfield( L, index, "mipmaps" );
+    if ( ! lua_isnil( L, -1 ) )
+    {
+        flags |= lua_toboolean( L, -1 ) ? PlatformBitmap::kRequestMipmaps : PlatformBitmap::kRequestNoMipmaps;
+    }
+    lua_pop( L, 1 );
+
     lua_getfield( L, index, "filename" );
     const char *filename = luaL_checkstring( L, -1);
     if( filename )

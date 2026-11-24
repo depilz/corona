@@ -75,6 +75,22 @@ TextureFactory::PathForFile(
 	}
 }
 
+static bool
+IsRequestingMipmaps( U32 flags, const DisplayDefaults& defaults )
+{
+	if ( flags & PlatformBitmap::kRequestMipmaps )
+	{
+		return true;
+	}
+
+	if ( flags & PlatformBitmap::kRequestNoMipmaps )
+	{
+		return false;
+	}
+
+	return defaults.GetMipmaps();
+}
+
 PlatformBitmap *
 TextureFactory::CreateBitmap(
 	const char *filePath, U32 flags, bool convertToGrayscale )
@@ -136,6 +152,12 @@ TextureFactory::CreateBitmap(
 			}
 		}
 	}
+
+	// The properties set above can swap the width and height, so mipmaps are decided after them.
+	pBitmap->SetMipmaps(
+		IsRequestingMipmaps( flags, display.GetDefaults() )
+		&& ! convertToGrayscale
+		&& Display::SupportsMipmaps( pBitmap->Width(), pBitmap->Height() ) );
 
 	return pBitmap;
 }
@@ -522,7 +544,7 @@ TextureFactory::DidAddTexture( const TextureResource& resource )
 	if ( runtime.IsProperty( Runtime::kIsApplicationExecuting ) )
 	{
 		const Texture& texture = resource.GetTexture();
-		size_t numTextureBytes = texture.GetSizeInBytes();
+		size_t numTextureBytes = texture.GetFootprintInBytes();
 		fTextureMemoryUsed += numTextureBytes;
 	}
 }
@@ -537,7 +559,7 @@ TextureFactory::WillRemoveTexture( const TextureResource& resource )
 	if ( runtime.IsProperty( Runtime::kIsApplicationExecuting ) )
 	{
 		const Texture& texture = resource.GetTexture();
-		size_t numTextureBytes = texture.GetSizeInBytes();
+		size_t numTextureBytes = texture.GetFootprintInBytes();
 		fTextureMemoryUsed -= numTextureBytes;
 		Rtt_ASSERT( fTextureMemoryUsed >= 0 );
 	}

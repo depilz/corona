@@ -84,6 +84,28 @@ namespace /*anonymous*/
         }
     }
 
+    GLenum getMipmapFilterToken( Texture::Filter filter )
+    {
+        return Texture::kNearest == filter ? GL_NEAREST_MIPMAP_NEAREST : GL_LINEAR_MIPMAP_LINEAR;
+    }
+
+    void drainErrors()
+    {
+        const int kMaxPendingErrors = 32;
+
+        for ( int i = 0; i < kMaxPendingErrors && GL_NO_ERROR != glGetError(); i++ )
+        {
+        }
+    }
+
+    bool generateMipmaps()
+    {
+        drainErrors();
+        glGenerateMipmap( GL_TEXTURE_2D );
+
+        return GL_NO_ERROR == glGetError();
+    }
+
     GLenum convertWrapToken( Texture::Wrap wrap )
     {
         GLenum result = GL_CLAMP_TO_EDGE;
@@ -204,6 +226,12 @@ GLTexture::Create( CPUResource* resource )
         fCachedFormat = internalFormat;
         fCachedWidth = w;
         fCachedHeight = h;
+
+        if ( texture->GetMipmaps() && data && generateMipmaps() )
+        {
+            glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, getMipmapFilterToken( texture->GetFilter() ) );
+            GL_CHECK_ERROR();
+        }
     }
     texture->ReleaseData();
 

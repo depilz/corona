@@ -1495,6 +1495,12 @@ Renderer::GetMaxTextureSize()
     return result;
 }
 
+bool
+Renderer::SupportsMipmaps( U32 width, U32 height )
+{
+    return CommandBuffer::SupportsMipmaps( width, height );
+}
+
 const char *
 Renderer::GetGlString( const char *s )
 {

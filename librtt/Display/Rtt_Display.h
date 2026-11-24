@@ -330,6 +330,7 @@ class Display
         void GetViewProjectionMatrix( glm::mat4 &viewMatrix, glm::mat4 &projMatrix );
                 
         static U32 GetMaxTextureSize();
+        static bool SupportsMipmaps( U32 width, U32 height );
         static const char *GetGlString( const char *s );
         static bool GetGpuSupportsHighPrecisionFragmentShaders();
         static U32 GetMaxUniformVectorsCount();

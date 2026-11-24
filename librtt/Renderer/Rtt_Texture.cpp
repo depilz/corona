@@ -10,6 +10,7 @@
 #include "Renderer/Rtt_Texture.h"
 
 #include "Core/Rtt_Assert.h"
+#include "Core/Rtt_Math.h"
 
 // ----------------------------------------------------------------------------
 
@@ -57,6 +58,12 @@ Texture::GetWrapY() const
 	return kClampToEdge;
 }
 
+bool
+Texture::GetMipmaps() const
+{
+	return false;
+}
+
 size_t 
 Texture::GetSizeInBytes() const
 {
@@ -74,6 +81,31 @@ Texture::GetSizeInBytes() const
 		case kARGB:			return w * h * 4;
 		default:			return 0;
 	}
+}
+
+size_t
+Texture::GetFootprintInBytes() const
+{
+	const size_t baseSize = GetSizeInBytes();
+
+	if ( ! GetMipmaps() || 0 == baseSize )
+	{
+		return baseSize;
+	}
+
+	U32 w = GetWidth();
+	U32 h = GetHeight();
+	const size_t bytesPerPixel = baseSize / ( w * h );
+	size_t result = baseSize;
+
+	while ( w > 1 || h > 1 )
+	{
+		w = Max< U32 >( w / 2, 1 );
+		h = Max< U32 >( h / 2, 1 );
+		result += bytesPerPixel * w * h;
+	}
+
+	return result;
 }
 
 U8

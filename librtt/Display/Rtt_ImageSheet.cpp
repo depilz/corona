@@ -64,6 +64,13 @@ ImageSheet::CreateAndPush(
 			// and support dynamic image resolution
 			U32 flags = PlatformBitmap::kIsNearestAvailablePixelDensity | PlatformBitmap::kIsBitsFullResolution;
 
+			lua_getfield( L, nextArg, "mipmaps" );
+			if ( ! lua_isnil( L, -1 ) )
+			{
+				flags |= lua_toboolean( L, -1 ) ? PlatformBitmap::kRequestMipmaps : PlatformBitmap::kRequestNoMipmaps;
+			}
+			lua_pop( L, 1 );
+
 			TextureFactory& factory = runtime->GetDisplay().GetTextureFactory();
 			SharedPtr< TextureResource > texture =
 				factory.FindOrCreate( imageName, baseDir, flags, false );
