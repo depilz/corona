@@ -39,6 +39,7 @@ class Uniform;
 class RenderingStream;
 class BufferBitmap;
 class ShaderData;
+class WorkerPool;
 struct CustomGraphicsInfo;
 struct TimeTransform;
 
@@ -414,6 +415,8 @@ class Renderer
         
 		const TimeTransform* fPrevTimeTransform;   
 		float fRawTime;
+
+		WorkerPool* fDecodePool; // Created on the first Swap that decodes ahead; joined in the destructor
 };
 
 // ----------------------------------------------------------------------------

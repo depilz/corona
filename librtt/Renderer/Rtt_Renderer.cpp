@@ -26,6 +26,7 @@
 #include "Core/Rtt_Assert.h"
 #include "Core/Rtt_Math.h"
 #include "Core/Rtt_Types.h"
+#include "Core/Rtt_WorkerPool.h"
 #include "Renderer/Rtt_MCPUResourceObserver.h"
 #include "Display/Rtt_ObjectHandle.h"
 #include "Display/Rtt_ShaderData.h"
@@ -39,6 +40,8 @@
 #define ENABLE_DEBUG_PRINT	0
 
 #include <limits>
+#include <set>
+#include <vector>
 
 // ----------------------------------------------------------------------------
 
@@ -122,6 +125,176 @@ struct CustomGraphicsInfo
     PtrArray< StateBlockInfo > fStateBlocks;
 };
 
+namespace /*anonymous*/
+{
+
+const Texture*
+AsTexture( const CPUResource* resource )
+{
+	return CPUResource::kTexture == resource->GetType() ? static_cast< const Texture* >( resource ) : NULL;
+}
+
+// Worth decoding ahead: at least 2 lazy undecoded textures, at least 1 of them eligible
+bool
+WantsDecodeAhead( const LightPtrArray<CPUResource>& queue )
+{
+	if ( queue.Length() < 2 )
+	{
+		return false;
+	}
+
+	S32 lazyCount = 0;
+	bool anyOffThread = false;
+	for ( S32 i = 0, iMax = queue.Length(); i < iMax; i++ )
+	{
+		const Texture* texture = AsTexture( queue[i] );
+		if ( texture && texture->IsLazyUndecoded() )
+		{
+			++lazyCount;
+			anyOffThread = anyOffThread || texture->CanDecodeOffThread();
+			if ( lazyCount >= 2 && anyOffThread )
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+// Decodes the lazy textures of one Swap's create queue ahead of the create loop:
+// eligible ones on the pool, the others inline on the render thread. Textures are
+// admitted strictly in queue order under the decoded-bytes cap, reserved at
+// admission and released once created. Render thread only.
+//
+// Reservations never pass the cap (an over-cap image is admitted alone), since
+// inline images wait for their turn like eligible ones. Decoded pixels can pass
+// it transiently by one image: Create() still decodes, on the render thread, an
+// image the cap does not count (a text bitmap, whose size is unknown before
+// drawing) while admitted images are in flight. That overshoot is accepted.
+class DecodeAhead
+{
+	public:
+		DecodeAhead( WorkerPool& pool, const LightPtrArray<CPUResource>& queue );
+
+	public:
+		void BeforeCreate( S32 index );
+		void AfterCreate( S32 index );
+		void Drain();
+
+	private:
+		struct Slot
+		{
+			Slot() : fBytes( 0 ), fPushed( false ), fAdmitted( false ), fOffThread( false ) {}
+
+			WorkerPool::Ticket fTicket;
+			size_t fBytes;
+			bool fPushed;
+			bool fAdmitted;
+			bool fOffThread;
+		};
+
+		void Admit();
+
+	private:
+		WorkerPool& fPool;
+		const LightPtrArray<CPUResource>& fQueue;
+		AdmissionQueue< S32 > fAdmission;
+		std::vector< Slot > fSlots; // One per create queue entry
+};
+
+DecodeAhead::DecodeAhead( WorkerPool& pool, const LightPtrArray<CPUResource>& queue )
+:	fPool( pool ),
+	fQueue( queue ),
+	fAdmission(),
+	fSlots( queue.Length() )
+{
+	// Each texture owns its bitmap, so a texture queued twice is decoded once
+	std::set< const Texture* > seen;
+	for ( S32 i = 0, iMax = queue.Length(); i < iMax; i++ )
+	{
+		const Texture* texture = AsTexture( queue[i] );
+		if ( texture && texture->IsLazyUndecoded() && seen.insert( texture ).second )
+		{
+			Slot& slot = fSlots[i];
+			slot.fBytes = texture->GetDecodedCost();
+			slot.fPushed = true;
+			slot.fOffThread = texture->CanDecodeOffThread();
+			fAdmission.Push( i, slot.fBytes );
+		}
+	}
+	Admit();
+}
+
+void
+DecodeAhead::BeforeCreate( S32 index )
+{
+	Slot& slot = fSlots[index];
+
+	// Everything before index was released, so index was admitted by now
+	Rtt_ASSERT( ! slot.fPushed || slot.fAdmitted );
+	if ( slot.fTicket )
+	{
+		fPool.Wait( slot.fTicket );
+		slot.fTicket.reset();
+	}
+}
+
+void
+DecodeAhead::AfterCreate( S32 index )
+{
+	Slot& slot = fSlots[index];
+	if ( slot.fAdmitted )
+	{
+		slot.fAdmitted = false;
+		fAdmission.Release( slot.fBytes );
+		Admit();
+	}
+}
+
+void
+DecodeAhead::Drain()
+{
+	for ( size_t i = 0; i < fSlots.size(); i++ )
+	{
+		if ( fSlots[i].fTicket )
+		{
+			fPool.Wait( fSlots[i].fTicket );
+			fSlots[i].fTicket.reset();
+		}
+	}
+}
+
+// Submits the eligible images first, so the inline ones decode while the workers do
+void
+DecodeAhead::Admit()
+{
+	std::vector< S32 > inlineIndices;
+	S32 index;
+	size_t bytes;
+	while ( fAdmission.AdmitNext( index, bytes ) )
+	{
+		Slot& slot = fSlots[index];
+		slot.fAdmitted = true;
+		if ( slot.fOffThread )
+		{
+			const Texture* texture = AsTexture( fQueue[index] );
+			slot.fTicket = fPool.Submit( [texture]{ texture->Prefetch(); }, bytes );
+		}
+		else
+		{
+			inlineIndices.push_back( index );
+		}
+	}
+	for ( size_t i = 0; i < inlineIndices.size(); i++ )
+	{
+		AsTexture( fQueue[inlineIndices[i]] )->Prefetch();
+	}
+}
+
+} // anonymous namespace
+
+// ----------------------------------------------------------------------------
+
 // NOT USED: const U32 kElementsPerMat4 = 16;
 
 Renderer::Statistics::Statistics()
@@ -188,7 +361,8 @@ Renderer::Renderer( Rtt_Allocator* allocator )
 	fVertexOffset( 0 ),
 	fCurrentGeometry( NULL ),
     fTimeDependencyCount( 0 ),
-    fPrevTimeTransform( NULL )
+    fPrevTimeTransform( NULL ),
+    fDecodePool( NULL )
 {
     // Always have at least 1 mask count.
     fMaskCount.Append( 0 );
@@ -196,6 +370,9 @@ Renderer::Renderer( Rtt_Allocator* allocator )
 
 Renderer::~Renderer()
 {
+    // Swap waits on every ticket it submits, so no job is left and this only joins the idle workers
+    Rtt_DELETE( fDecodePool );
+
     Rtt_DELETE( fGeometryPool );
     Rtt_DELETE( fInstancingGeometryPool );
 
@@ -1006,11 +1183,30 @@ Renderer::Swap()
 
     // Create GPUResources
     Rtt_AbsoluteTime start = START_TIMING();
+    DecodeAhead* decodeAhead = NULL;
+    if ( WantsDecodeAhead( fCreateQueue ) )
+    {
+        if ( ! fDecodePool )
+        {
+            fDecodePool = Rtt_NEW( fAllocator, WorkerPool );
+        }
+        if ( fDecodePool->WorkerCount() > 0 )
+        {
+            decodeAhead = Rtt_NEW( fAllocator, DecodeAhead( *fDecodePool, fCreateQueue ) );
+        }
+    }
     for(S32 i = 0; i < fCreateQueue.Length(); ++i)
     {
         CPUResource* data = fCreateQueue[i];
+        if ( decodeAhead ) { decodeAhead->BeforeCreate( i ); }
         GPUResource* gpuResource = data->GetGPUResource();
         gpuResource->Create( data );
+        if ( decodeAhead ) { decodeAhead->AfterCreate( i ); }
+    }
+    if ( decodeAhead )
+    {
+        decodeAhead->Drain();
+        Rtt_DELETE( decodeAhead );
     }
     fCreateQueue.Remove(0, fCreateQueue.Length(), false);
     fStatistics.fResourceCreateTime = STOP_TIMING(start);
