@@ -90,13 +90,17 @@ AndroidAssetBitmap::AndroidAssetBitmap( Rtt_Allocator &context, const char *file
 :	Super( context ),
 	fProperties( GetInitialPropertiesValue() ),
 	fPath( & context, filePath ),
-	fImageDecoder( &context, ntjb )
+	fImageDecoder( &context, ntjb ),
+	fCreatingThread( pthread_self() )
 {
 	// Set up the image decoder.
 	fImageDecoder.SetTarget(&fImageData);
 	fImageDecoder.SetPixelFormatToRGBA();
 	fImageDecoder.SetMaxWidth(Rtt::Display::GetMaxTextureSize());
 	fImageDecoder.SetMaxHeight(Rtt::Display::GetMaxTextureSize());
+
+	// Look up the file once here, so that a decode worker can read it without JNI.
+	fImageDecoder.ResolveFileLocation(filePath);
 
 	// Fetch the image's information such as pixel width, height, and orientation.
 	// The decoder will write this information to the targeted "fImageData" member variable.
@@ -117,10 +121,32 @@ AndroidAssetBitmap::GetBits( Rtt_Allocator *context ) const
 	const void *bits = Super::GetBits(context);
 	if (!bits)
 	{
-		fImageDecoder.DecodeFromFile(fPath.GetString());
+		// JNI, Lua and the Java fallback belong to the creating thread. A decode worker
+		// runs the native decoder only; when it fails, the bitmap stays undecoded
+		// and the creating thread's next GetBits() runs the whole path.
+		if (pthread_equal(pthread_self(), fCreatingThread))
+		{
+			fImageDecoder.DecodeFromFile(fPath.GetString());
+		}
+		else if (fImageDecoder.DecodeNativelyFromFile(fPath.GetString()).HasFailed())
+		{
+			fImageData.DestroyImageByteBuffer();
+		}
 		bits = Super::GetBits(context);
 	}
 	return bits;
+}
+
+bool
+AndroidAssetBitmap::IsLazyUndecoded() const
+{
+	return ( NULL == fImageData.GetImageByteBuffer() );
+}
+
+bool
+AndroidAssetBitmap::CanDecodeOffThread() const
+{
+	return fImageDecoder.CanDecodeNatively();
 }
 
 AndroidImageDecoder&
@@ -206,6 +232,18 @@ PlatformBitmap::Format
 AndroidMaskAssetBitmap::GetFormat() const
 {
 	return PlatformBitmap::kMask;
+}
+
+bool
+AndroidMaskAssetBitmap::IsLazyUndecoded() const
+{
+	return false;
+}
+
+bool
+AndroidMaskAssetBitmap::CanDecodeOffThread() const
+{
+	return false;
 }
 
 // ----------------------------------------------------------------------------

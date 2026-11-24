@@ -8,12 +8,14 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+#include <unistd.h>
 #include "AndroidImageDecoder.h"
 #include "AndroidJavaImageDecoder.h"
 #include "AndroidNativePngDecoder.h"
 #include "AndroidOperationResult.h"
 #include "Core/Rtt_Build.h"
 #include "Core/Rtt_String.h"
+#include "NativeToJavaBridge.h"
 
 
 // ----------------------------------------------------------------------------
@@ -23,13 +25,73 @@
 /// Creates a new image decoder.
 /// @param allocatorPointer Allocator this decoder needs to creates its objects. Cannot be NULL.
 AndroidImageDecoder::AndroidImageDecoder(Rtt_Allocator *allocatorPointer, NativeToJavaBridge * ntjb)
-:	AndroidBaseImageDecoder(allocatorPointer), fNativeToJavaBridge(ntjb)
+:	AndroidBaseImageDecoder(allocatorPointer),
+	fNativeToJavaBridge(ntjb),
+	fFileLocation(kUnresolved),
+	fPackageEntry(allocatorPointer)
 {
 }
 
 /// Destroys this decoder and its resources.
 AndroidImageDecoder::~AndroidImageDecoder()
 {
+}
+
+
+// ----------------------------------------------------------------------------
+// Public Member Functions
+// ----------------------------------------------------------------------------
+
+/// Looks up where the given PNG file lives, via JNI, so that later decodes of it can skip that lookup.
+/// <br>
+/// Binds this decoder to the given file: every later decode is expected to be given the same path.
+/// The location is kept only if the native PNG decoder can read the file as is, which is
+/// a plain file or an uncompressed entry within the APK or expansion file.
+/// Must be called on a thread attached to the Java VM.
+/// @param filePath The name and path of the image file. Cannot be NULL or empty.
+void AndroidImageDecoder::ResolveFileLocation(const char *filePath)
+{
+	if (!Rtt_StringEndsWithNoCase(filePath, ".png"))
+	{
+		return;
+	}
+
+	if (fNativeToJavaBridge->GetAssetFileLocation(filePath, fPackageEntry))
+	{
+		if (!fPackageEntry.IsCompressed())
+		{
+			fFileLocation = kPackageEntry;
+		}
+	}
+	else if (access(filePath, R_OK) == 0)
+	{
+		fFileLocation = kPlainFile;
+	}
+}
+
+/// Determines if DecodeNativelyFromFile() can decode the file given to ResolveFileLocation().
+/// @return Returns true if the file is a PNG whose location was resolved to a plain file or
+///         an uncompressed package entry.
+bool AndroidImageDecoder::CanDecodeNatively() const
+{
+	return (fFileLocation != kUnresolved);
+}
+
+/// Decodes the file given to ResolveFileLocation() with the native PNG decoder only.
+/// <br>
+/// Makes no JNI calls and has no Java fallback, so it may run on a thread that is not attached to the Java VM.
+/// @param filePath The name and path of the image file given to ResolveFileLocation().
+/// @return Returns the result of the image decoding operation, as described by OnDecodeFromFile().
+///         Fails if CanDecodeNatively() returns false.
+AndroidOperationResult AndroidImageDecoder::DecodeNativelyFromFile(const char *filePath)
+{
+	if (!CanDecodeNatively())
+	{
+		return AndroidOperationResult::FailedWith(GetAllocator(), "Image file location was not resolved.");
+	}
+
+	AndroidNativePngDecoder pngDecoder(*this, fNativeToJavaBridge);
+	return pngDecoder.DecodeFromResolvedFile(filePath, (kPackageEntry == fFileLocation) ? &fPackageEntry : NULL);
 }
 
 
@@ -54,7 +116,11 @@ AndroidOperationResult AndroidImageDecoder::OnDecodeFromFile(const char *filePat
 	AndroidOperationResult result;
 
 	// First, attempt to load the image file natively on the C/C++ side.
-	if (Rtt_StringEndsWithNoCase(filePath, ".png"))
+	if (CanDecodeNatively())
+	{
+		result = DecodeNativelyFromFile(filePath);
+	}
+	else if (Rtt_StringEndsWithNoCase(filePath, ".png"))
 	{
 		AndroidNativePngDecoder pngDecoder(*this, fNativeToJavaBridge);
 		result = pngDecoder.DecodeFromFile(filePath);

@@ -11,6 +11,7 @@
 #ifndef _Rtt_AndroidBitmap_H__
 #define _Rtt_AndroidBitmap_H__
 
+#include <pthread.h>
 #include "librtt/Display/Rtt_PlatformBitmap.h"
 #include "Core/Rtt_Array.h"
 #include "Core/Rtt_String.h"
@@ -61,6 +62,8 @@ class AndroidAssetBitmap : public AndroidBitmap
 		virtual U32 UprightWidth() const;
 		virtual U32 UprightHeight() const;
 		virtual const void * GetBits( Rtt_Allocator * context ) const;
+		virtual bool IsLazyUndecoded() const;
+		virtual bool CanDecodeOffThread() const;
 
 	protected:
 		AndroidImageDecoder& ImageDecoder();
@@ -72,6 +75,7 @@ class AndroidAssetBitmap : public AndroidBitmap
 		U8 fProperties;
 		String fPath;
 		mutable AndroidImageDecoder fImageDecoder;
+		pthread_t fCreatingThread;
 };
 
 class AndroidMaskAssetBitmap : public AndroidAssetBitmap
@@ -82,6 +86,8 @@ class AndroidMaskAssetBitmap : public AndroidAssetBitmap
 		AndroidMaskAssetBitmap( Rtt_Allocator& context, const char *filePath, NativeToJavaBridge *ntjb );
 
 		virtual Format GetFormat() const;
+		virtual bool IsLazyUndecoded() const;
+		virtual bool CanDecodeOffThread() const;
 };
 
 class AndroidTextBitmap : public AndroidBitmap

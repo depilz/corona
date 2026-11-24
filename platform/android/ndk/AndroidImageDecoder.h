@@ -13,6 +13,7 @@
 
 #include "AndroidBaseImageDecoder.h"
 #include "AndroidOperationResult.h"
+#include "AndroidZipFileEntry.h"
 
 
 // Forward declarations.
@@ -28,11 +29,24 @@ class AndroidImageDecoder : public AndroidBaseImageDecoder
 		AndroidImageDecoder(Rtt_Allocator *allocatorPointer, NativeToJavaBridge *ntjb);
 		virtual ~AndroidImageDecoder();
 
+		void ResolveFileLocation(const char *filePath);
+		bool CanDecodeNatively() const;
+		AndroidOperationResult DecodeNativelyFromFile(const char *filePath);
+
 	protected:
 		AndroidOperationResult OnDecodeFromFile(const char *filePath);
 
 	private:
+		enum FileLocation
+		{
+			kUnresolved,
+			kPlainFile,
+			kPackageEntry
+		};
+
 		NativeToJavaBridge *fNativeToJavaBridge;
+		FileLocation fFileLocation;
+		AndroidZipFileEntry fPackageEntry;
 };
 
 #endif // _AndroidImageDecoder_H__
