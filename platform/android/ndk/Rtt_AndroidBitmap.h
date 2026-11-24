@@ -11,7 +11,6 @@
 #ifndef _Rtt_AndroidBitmap_H__
 #define _Rtt_AndroidBitmap_H__
 
-#include <pthread.h>
 #include "librtt/Display/Rtt_PlatformBitmap.h"
 #include "Core/Rtt_Array.h"
 #include "Core/Rtt_String.h"
@@ -75,7 +74,6 @@ class AndroidAssetBitmap : public AndroidBitmap
 		U8 fProperties;
 		String fPath;
 		mutable AndroidImageDecoder fImageDecoder;
-		pthread_t fCreatingThread;
 };
 
 class AndroidMaskAssetBitmap : public AndroidAssetBitmap

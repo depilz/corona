@@ -73,6 +73,10 @@ class WorkerPool
 			return spare < kMaxWorkers ? spare : kMaxWorkers;
 		}
 
+		// True on the worker threads of any pool. A thread that runs a job
+		// through Wait() does not become a worker.
+		static bool IsWorkerThread() { return WorkerThreadMark(); }
+
 	public:
 		// The hooks run on each worker thread right after it starts and right
 		// before it exits (e.g. to attach the thread to a VM).
@@ -159,6 +163,12 @@ class WorkerPool
 		static const bool kThreadsAvailable = true;
 #endif
 
+		static bool& WorkerThreadMark()
+		{
+			static thread_local bool sIsWorkerThread = false;
+			return sIsWorkerThread;
+		}
+
 		// Caller holds fMutex.
 		void StartWorkersOnce()
 		{
@@ -201,6 +211,7 @@ class WorkerPool
 
 		void RunWorker()
 		{
+			WorkerThreadMark() = true;
 			if ( fOnThreadStart ) { fOnThreadStart(); }
 
 			std::unique_lock< std::mutex > lock( fMutex );

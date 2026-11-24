@@ -14,6 +14,7 @@
 #include "NativeToJavaBridge.h"
 #include "Rtt_AndroidBitmap.h"
 #include "Rtt_PlatformFont.h"
+#include "Core/Rtt_WorkerPool.h"
 #include "Display/Rtt_Display.h"
 
 // ----------------------------------------------------------------------------
@@ -90,8 +91,7 @@ AndroidAssetBitmap::AndroidAssetBitmap( Rtt_Allocator &context, const char *file
 :	Super( context ),
 	fProperties( GetInitialPropertiesValue() ),
 	fPath( & context, filePath ),
-	fImageDecoder( &context, ntjb ),
-	fCreatingThread( pthread_self() )
+	fImageDecoder( &context, ntjb )
 {
 	// Set up the image decoder.
 	fImageDecoder.SetTarget(&fImageData);
@@ -121,10 +121,11 @@ AndroidAssetBitmap::GetBits( Rtt_Allocator *context ) const
 	const void *bits = Super::GetBits(context);
 	if (!bits)
 	{
-		// Lua errors and the Java fallback belong to the creating thread. A decode worker
-		// runs the native PNG decoder, or Java for a JPEG without raising Lua errors; when it fails,
-		// the bitmap stays undecoded and the creating thread's next GetBits() runs the whole path.
-		if (pthread_equal(pthread_self(), fCreatingThread))
+		// A decode worker must not raise Lua errors and has no Java fallback. It runs the native
+		// PNG decoder, or Java for a JPEG; when it fails, the bitmap stays undecoded and the next
+		// GetBits() on a thread that is not a worker runs the whole path. The GL thread can change while the
+		// runtime lives, so do not compare with the thread that built the bitmap.
+		if (!WorkerPool::IsWorkerThread())
 		{
 			fImageDecoder.DecodeFromFile(fPath.GetString());
 		}
