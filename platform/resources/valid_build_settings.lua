@@ -77,6 +77,7 @@ settings =
 		},
 		CoronaWindowMovesWhenKeyboardAppears = false,  -- Both camel case and pascal case are accepted.
 		coronaWindowMovesWhenKeyboardAppears = false,
+		vsyncPacing = true,
 		initialSystemUiVisibility = "",
 		facebookAppId = "",  -- Both camel case and pascal case are accepted.
 		FacebookAppID = "",

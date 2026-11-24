@@ -565,6 +565,10 @@ if "table" == type(buildSettings) then
 		-- Fetch custom intent filters.
 		fetchIntentFiltersFrom(buildSettings.android.intentFilters)
 
+		if buildSettings.android.vsyncPacing == true then
+			fetchApplicationChildXmlElementsFrom('<meta-data android:name="vsyncPacing" android:value="true" />')
+		end
+
 		-- Fetch custom raw XML elements
 		fetchManifestChildXmlElementsFrom(buildSettings.android.manifestChildElements)
 		fetchApplicationChildXmlElementsFrom(buildSettings.android.applicationChildElements)
