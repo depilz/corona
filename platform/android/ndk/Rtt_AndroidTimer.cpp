@@ -55,6 +55,12 @@ AndroidTimer::IsRunning() const
 	return fRunning;
 }
 
+bool
+AndroidTimer::SupportsFrameRate( U8 fps ) const
+{
+	return 120 == fps || PlatformTimer::SupportsFrameRate( fps );
+}
+
 
 // ----------------------------------------------------------------------------
 

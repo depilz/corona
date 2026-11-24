@@ -44,6 +44,10 @@ public class CoronaGLSurfaceView extends GLSurfaceView {
 
 	private com.ansca.corona.CoronaRuntime fCoronaRuntime;
 
+	private volatile float fContentFrameRate;
+
+	private android.view.Surface fFrameRateSurface;
+
 	/**
 	 * Creates a new OpenGL surface used to render Corona's content.
 	 * @param context Reference to the context. Cannot be null.
@@ -246,6 +250,44 @@ public class CoronaGLSurfaceView extends GLSurfaceView {
 
 		// Resize the OpenGL viewport with the given surface's width and height.
 		super.surfaceChanged(holder, format, width, height);
+
+		declareContentFrameRate();
+	}
+
+	@Override
+	public void surfaceCreated(android.view.SurfaceHolder holder) {
+		super.surfaceCreated(holder);
+
+		fFrameRateSurface = null;
+	}
+
+	public void setContentFrameRate(float framesPerSecond) {
+		fContentFrameRate = framesPerSecond;
+		post(new Runnable() {
+			@Override
+			public void run() {
+				declareContentFrameRate();
+			}
+		});
+	}
+
+	private void declareContentFrameRate() {
+		if ((fContentFrameRate == 0) || (android.os.Build.VERSION.SDK_INT < 30)) {
+			return;
+		}
+
+		android.view.Surface surface = getHolder().getSurface();
+		if ((surface == null) || (surface == fFrameRateSurface) || (surface.isValid() == false)) {
+			return;
+		}
+
+		fFrameRateSurface = surface;
+		try {
+			surface.setFrameRate(fContentFrameRate, android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
+		}
+		catch (Exception ex) {
+			ex.printStackTrace();
+		}
 	}
 
 	/**

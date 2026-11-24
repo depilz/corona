@@ -17,6 +17,10 @@ import android.view.Choreographer;
 import java.util.Arrays;
 
 class VsyncFrameTimer implements Choreographer.FrameCallback {
+	static final int HIGH_FRAME_RATE = 120;
+
+	private static final long HIGH_RATE_PERIOD_NANOS = 1000000000L / HIGH_FRAME_RATE;
+	private static final long MAX_HIGH_RATE_VSYNC_DELTA_NANOS = 40000000;
 	private static final int VSYNC_SAMPLE_COUNT = 15;
 	private static final double MAX_LOCK_ERROR = 0.05;
 	private static final double MAX_LOCKED_ERROR = 0.08;
@@ -43,6 +47,10 @@ class VsyncFrameTimer implements Choreographer.FrameCallback {
 	VsyncFrameTimer(Handler mainHandler, Runnable frameRequest) {
 		myMainHandler = mainHandler;
 		myFrameRequest = frameRequest;
+	}
+
+	static boolean isHighRateInterval(int milliseconds) {
+		return milliseconds <= 12;
 	}
 
 	boolean isRunning() {
@@ -113,12 +121,18 @@ class VsyncFrameTimer implements Choreographer.FrameCallback {
 
 	private void updateVsyncPeriod(long frameTimeNanos) {
 		long delta = frameTimeNanos - myLastFrameNanos;
-		if (myLastFrameNanos != 0 && delta > 0 && delta <= myContentPeriodNanos) {
+		if (myLastFrameNanos != 0 && delta > 0 && delta <= maxVsyncDeltaNanos()) {
 			myVsyncDeltas[myNextVsyncDeltaIndex] = delta;
 			myNextVsyncDeltaIndex = (myNextVsyncDeltaIndex + 1) % VSYNC_SAMPLE_COUNT;
 			myVsyncDeltaCount = Math.min(myVsyncDeltaCount + 1, VSYNC_SAMPLE_COUNT);
 		}
 		myLastFrameNanos = frameTimeNanos;
+	}
+
+	private long maxVsyncDeltaNanos() {
+		long contentPeriod = myContentPeriodNanos;
+		// Most panels have vsyncs longer than this content period, and they must still be measured.
+		return (contentPeriod == HIGH_RATE_PERIOD_NANOS) ? MAX_HIGH_RATE_VSYNC_DELTA_NANOS : contentPeriod;
 	}
 
 	private long medianVsyncPeriodNanos() {
@@ -167,7 +181,9 @@ class VsyncFrameTimer implements Choreographer.FrameCallback {
 
 	private static long contentPeriodNanos(int milliseconds) {
 		int fps;
-		if (milliseconds <= 20) {
+		if (isHighRateInterval(milliseconds)) {
+			fps = HIGH_FRAME_RATE;
+		} else if (milliseconds <= 20) {
 			fps = 60;
 		} else if (milliseconds <= 40) {
 			fps = 30;

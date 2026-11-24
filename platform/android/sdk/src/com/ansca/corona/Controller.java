@@ -78,6 +78,7 @@ public class Controller {
 	private Runnable				myTimerTask;
 	private int						myTimerMilliseconds;
 	private VsyncFrameTimer			myVsyncFrameTimer;
+	private boolean					myIsVsyncPacingEnabled;
 	
 	private Context                 myContext;
 	private CoronaRuntime           myRuntime;
@@ -142,7 +143,8 @@ public class Controller {
         // This will create a handler that will be attached to the main thread
         myHandler = new Handler(Looper.getMainLooper());
         myTimerHandler = new Handler(Looper.getMainLooper());
-        if (Build.VERSION.SDK_INT >= 16 && isVsyncPacingEnabled(context)) {
+        if (Build.VERSION.SDK_INT >= 16) {
+            myIsVsyncPacingEnabled = isVsyncPacingEnabled(context);
             myVsyncFrameTimer = new VsyncFrameTimer(myTimerHandler, new Runnable() {
                 public void run() {
                     requestRender();
@@ -504,12 +506,18 @@ public class Controller {
 	}
     
     public void startTimer() {
-    	if ( myTimerMilliseconds == 0 ) {
+    	final int milliseconds = myTimerMilliseconds;
+    	if ( milliseconds == 0 ) {
     		return;
     	}
 
-    	if ( myVsyncFrameTimer != null ) {
-    		myVsyncFrameTimer.start(myTimerMilliseconds);
+    	boolean isHighRate = myVsyncFrameTimer != null && VsyncFrameTimer.isHighRateInterval(milliseconds);
+    	if ( isHighRate && myGLView != null ) {
+    		myGLView.setContentFrameRate(VsyncFrameTimer.HIGH_FRAME_RATE);
+    	}
+
+    	if ( isHighRate || (myVsyncFrameTimer != null && myIsVsyncPacingEnabled) ) {
+    		myVsyncFrameTimer.start(milliseconds);
     		return;
     	}
 
