@@ -39,6 +39,7 @@ local corona_build_id = os.getenv("CORONA_BUILD_ID")
 -- init options
 local options = {
 	appBundleFile = quoteString( appBundleFile ),
+	srcAssets = srcAssets,
 	dstDir = dstDir,
 	bundleversion = bundleversion,
 	signingIdentity = signingIdentity,
