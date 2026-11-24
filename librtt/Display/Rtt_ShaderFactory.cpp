@@ -2109,14 +2109,44 @@ ShaderFactory::GetDefaultColorShader() const
     return *fDefaultColorShader;
 }
         
+// An undefined node keeps its old kernel in the graph's stub, so the graph does not use the public effect.
+static bool
+IsKernelInStub( lua_State *L, int localStubsIndex, const char *categoryName, const char *name )
+{
+    if ( ! localStubsIndex )
+    {
+        return false;
+    }
+
+    int top = lua_gettop( L );
+    bool isKernelInStub = false;
+
+    lua_getfield( L, localStubsIndex, categoryName );
+
+    if ( lua_istable( L, -1 ) )
+    {
+        lua_getfield( L, -1, name );
+
+        if ( lua_istable( L, -1 ) )
+        {
+            lua_getfield( L, -1, "kernel" );
+            isKernelInStub = lua_iscfunction( L, -1 );
+        }
+    }
+
+    lua_settop( L, top );
+
+    return isKernelInStub;
+}
+
 ShaderComposite *
 ShaderFactory::FindOrLoadGraph( ShaderTypes::Category category, const char *name, bool shouldFallback, int localStubsIndex )
 {
     ShaderComposite *result = NULL;
 
-    if ( name )
+    if ( name && ! IsKernelInStub( fL, localStubsIndex, ShaderTypes::StringForCategory( category ), name ) )
     {
-        fUnusedPrototypes.erase( PrototypeKey( category, name ) );
+        fUnusedPrototypes.erase( PrototypeKey( category, name ) ); // used under its public name
     }
 
 	const ShaderComposite *prototype = (ShaderComposite*)FindPrototype( category, name, localStubsIndex );
