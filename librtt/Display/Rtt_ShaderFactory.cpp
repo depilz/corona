@@ -1354,12 +1354,17 @@ bool ShaderFactory::UndefineEffect( lua_State *L, int nameIndex )
         
         if (!lua_isnil( factoryL, -1 ))
         {
-            lua_getfield( factoryL, -1, info.fEffectName ); // kernel, categoryFuncs, globalStubs, categoryGlobalStubs, stub
-            lua_pushvalue( factoryL, -5 ); // kernel, categoryFuncs, globalStubs, categoryGlobalStubs, stub, kernel
-            lua_setfield( factoryL, -2, "kernel" ); // kernel, categoryFuncs, globalStubs, categoryGlobalStubs, stub = { kernel = kernel }
+            lua_getfield( factoryL, -1, info.fEffectName ); // kernel, categoryFuncs, globalStubs, categoryGlobalStubs, stub?
+
+            if (lua_istable( factoryL, -1 )) // no stub if never named as a sub-effect, or already undefined
+            {
+                lua_pushvalue( factoryL, -5 ); // kernel, categoryFuncs, globalStubs, categoryGlobalStubs, stub, kernel
+                lua_setfield( factoryL, -2, "kernel" ); // kernel, categoryFuncs, globalStubs, categoryGlobalStubs, stub = { kernel = kernel }
+                lua_pushnil( factoryL ); // kernel, categoryFuncs, globalStubs, categoryGlobalStubs, stub, nil
+                lua_setfield( factoryL, -3, info.fEffectName ); // kernel, categoryFuncs, globalStubs, categoryGlobalStubs = { ..., [effectName] = nil }, stub
+            }
+
             lua_pop( factoryL, 1 ); // kernel, categoryFuncs, globalStubs, categoryGlobalStubs
-            lua_pushnil( factoryL ); // kernel, categoryFuncs, globalStubs, categoryGlobalStubs, nil
-            lua_setfield( factoryL, -2, info.fEffectName ); // kernel, categoryFuncs, globalStubs, categoryGlobalStubs = { ..., [effectName] = nil }
         }
         
         lua_pop( factoryL, 1 ); // kernel, categoryFuncs, globalStubs
