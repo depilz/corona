@@ -22,6 +22,11 @@
     #include <EGL/egl.h>
 #endif
 
+#if ( defined( Rtt_IPHONE_ENV ) || defined( Rtt_TVOS_ENV ) ) && !defined( Rtt_MetalANGLE )
+    #define Rtt_GLKIT_ENV
+    #include <OpenGLES/ES3/gl.h>
+#endif
+
 #include "Rtt_Profiling.h"
 
 #include <stdio.h>
@@ -360,6 +365,17 @@ GLGeometry::SupportsInstancing()
         #else
             Suffix = ""; // has ID
         #endif
+        }
+    #endif
+
+    #if defined( Rtt_GLKIT_ENV ) // ES 3 contexts have instancing in core and do not list the EXT names
+        if (strstr( (const char *)glGetString( GL_VERSION ), "OpenGL ES 3" ) && !GL_HAS_SUPPORT())
+        {
+            GL_RESET();
+
+            DrawArrays = GL_GET_PROC( DrawArraysInstanced, );
+            DrawElements = GL_GET_PROC( DrawElementsInstanced, );
+            AttribDivisor = GL_GET_PROC( VertexAttribDivisor, );
         }
     #endif
     #endif // !defined( Rtt_NXS_ENV )
