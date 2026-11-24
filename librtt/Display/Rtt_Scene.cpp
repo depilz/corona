@@ -219,7 +219,11 @@ Scene::Render( Renderer& renderer, PlatformSurface& rTarget, ProfilingEntryRAII*
         
 		ADD_ENTRY( "Scene: Begin Render" );
 		
-        fOwner.GetTextureFactory().Preload( renderer );
+        const U32 preloadBudget = fOwner.GetDefaults().GetPreloadBudget();
+        if ( 0 == preloadBudget )
+        {
+            fOwner.GetTextureFactory().Preload( renderer );
+        }
 
 		ADD_ENTRY( "Scene: Preload" );
 		
@@ -280,6 +284,13 @@ Scene::Render( Renderer& renderer, PlatformSurface& rTarget, ProfilingEntryRAII*
         RenderOverlay( fOwner, renderer, identity );
 #endif
 
+        // With a budget, preloads come after the textures drawn in this frame.
+        bool hasPendingPreloads = false;
+        if ( preloadBudget > 0 )
+        {
+            hasPendingPreloads = fOwner.GetTextureFactory().PreloadWithinBudget( renderer, preloadBudget );
+        }
+
         renderer.EndFrame();
         
 		ADD_ENTRY( "Scene: Issue Draw Commands" );
@@ -297,7 +308,8 @@ Scene::Render( Renderer& renderer, PlatformSurface& rTarget, ProfilingEntryRAII*
 		// If any bound program linked either of the time uniforms, we have
 		// a time dependency in our scene and must leave it invalid on this
 		// frame. Otherwise, mark it as valid until any normal change.
-		fIsValid = !renderer.AddedUsesTime();
+		// Pending preloads also need another frame.
+		fIsValid = !renderer.AddedUsesTime() && !hasPendingPreloads;
 
         rTarget.Flush();
 
