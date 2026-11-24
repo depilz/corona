@@ -144,6 +144,17 @@ class PlatformBitmap
 
 		virtual U8 GetByteAlignment() const;
 
+		// Off-thread decode hook. Both default to false; a file bitmap that
+		// decodes lazily in GetBits() overrides them from its own pixel cache.
+		//
+		// IsLazyUndecoded(): the pixels are decoded by GetBits() and are not
+		// decoded yet. Turns false once GetBits() has cached the pixels.
+		virtual bool IsLazyUndecoded() const { return false; }
+
+		// CanDecodeOffThread(): GetBits() may run on a worker thread.
+		// Only meaningful while IsLazyUndecoded() is true.
+		virtual bool CanDecodeOffThread() const { return false; }
+
 #ifdef Rtt_ANDROID_ENV
 		void SwapRGB();
 		static void SwapBitmapRGB( char * base, int w, int h );

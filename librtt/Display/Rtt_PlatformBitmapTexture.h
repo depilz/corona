@@ -47,6 +47,9 @@ class PlatformBitmapTexture : public Texture
 		virtual U8 GetByteAlignment() const;
 		virtual const U8* GetData() const;
 		virtual void ReleaseData();
+		virtual bool IsLazyUndecoded() const;
+		virtual bool CanDecodeOffThread() const;
+		virtual void Prefetch() const;
 
 	public:
 		PlatformBitmap& GetBitmap() const { return fBitmap; }

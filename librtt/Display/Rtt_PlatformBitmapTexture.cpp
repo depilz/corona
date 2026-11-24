@@ -143,6 +143,25 @@ PlatformBitmapTexture::ReleaseData()
 	fBitmap.FreeBits();
 }
 
+bool
+PlatformBitmapTexture::IsLazyUndecoded() const
+{
+	return fBitmap.IsLazyUndecoded();
+}
+
+bool
+PlatformBitmapTexture::CanDecodeOffThread() const
+{
+	return fBitmap.IsLazyUndecoded() && fBitmap.CanDecodeOffThread();
+}
+
+void
+PlatformBitmapTexture::Prefetch() const
+{
+	// Same call as GetData(), so the bitmap caches the very pixels the upload reads
+	GetData();
+}
+
 // ----------------------------------------------------------------------------
 
 } // namespace Rtt
