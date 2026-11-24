@@ -82,13 +82,13 @@ static void PngWarningCallback(png_structp pngReaderPointer, png_const_charp mes
 static void PngInputRequestCallback(png_structp pngReaderPointer, png_bytep byteBuffer, png_size_t bytesToRead)
 {
 	// Validate.
-	if (!pngReaderPointer || !(pngReaderPointer->io_ptr) || !byteBuffer || (bytesToRead <= 0))
+	if (!pngReaderPointer || !png_get_io_ptr(pngReaderPointer) || !byteBuffer || (bytesToRead <= 0))
 	{
 		return;
 	}
 
 	// Fetch the file stream reader.
-	AndroidBinaryReader *fileReaderPointer = (AndroidBinaryReader*)(pngReaderPointer->io_ptr);
+	AndroidBinaryReader *fileReaderPointer = (AndroidBinaryReader*)png_get_io_ptr(pngReaderPointer);
 
 	// Read the next batch of bytes from the file to the PNG decoder.
 	AndroidBinaryReadResult result = fileReaderPointer->StreamTo((U8*)byteBuffer, (U32)bytesToRead);
@@ -174,6 +174,8 @@ AndroidOperationResult AndroidNativePngDecoder::OnDecodeFrom(AndroidBinaryReader
 	int colorType = -1;
 	int interlaceMethod = PNG_INTERLACE_NONE;
 	png_read_info(pngReaderPointer, pngInfoPointer);
+	png_set_crc_action(pngReaderPointer, PNG_CRC_QUIET_USE, PNG_CRC_NO_CHANGE); // Ignore IDAT checksums; header chunks were already checked.
+	png_set_option(pngReaderPointer, PNG_MAXIMUM_INFLATE_WINDOW, PNG_OPTION_ON); // Read images whose zlib header understates its window.
 	png_uint_32 getHeaderResult = png_get_IHDR(
 									pngReaderPointer, pngInfoPointer, &sourcePixelWidth, &sourcePixelHeight,
 									&colorChannelBitCount, &colorType, &interlaceMethod, NULL, NULL);
@@ -277,7 +279,7 @@ AndroidOperationResult AndroidNativePngDecoder::OnDecodeFrom(AndroidBinaryReader
 	}
 	else if ((colorChannelBitCount < 8) && (PNG_COLOR_TYPE_GRAY == colorType))
 	{
-		png_set_gray_1_2_4_to_8(pngReaderPointer);
+		png_set_expand_gray_1_2_4_to_8(pngReaderPointer);
 	}
 	colorChannelBitCount = 8;
 

@@ -11,6 +11,7 @@ add_definitions(
 	-DDISABLE_IMPORTGL
 	-DLUA_USE_DLOPEN
 	-DLUA_USE_POSIX
+	-DPNG_ARM_NEON_OPT=0 # libpng's NEON palette code halves the speed of 1/2/4-bit palette PNGs with transparency
 )
 
 include_directories (
@@ -23,7 +24,7 @@ include_directories (
 	${CORONA_ROOT}/external/openal-soft/include/AL
 	${CORONA_ROOT}/external/ALmixer
 	${CORONA_ROOT}/external/ALmixer/Isolated
-	${CORONA_ROOT}/external/lpng1256
+	${CORONA_ROOT}/external/libpng-1.6.59
 	${CORONA_ROOT}/external/luasocket/src
 	${CORONA_ROOT}/external/lpeg
 	${CORONA_ROOT}/external/luafilesystem/src
@@ -647,23 +648,21 @@ add_library( corona SHARED
 		${CORONA_ROOT}/platform/shared/Rtt_DependencyLoader.cpp
 		${CORONA_ROOT}/platform/shared/Rtt_DependencyUtilsAndroid.cpp
 
-		${CORONA_ROOT}/external/lpng1256/png.c
-		${CORONA_ROOT}/external/lpng1256/pngerror.c
-		${CORONA_ROOT}/external/lpng1256/pnggccrd.c
-		${CORONA_ROOT}/external/lpng1256/pngget.c
-		${CORONA_ROOT}/external/lpng1256/pngmem.c
-		${CORONA_ROOT}/external/lpng1256/pngpread.c
-		${CORONA_ROOT}/external/lpng1256/pngread.c
-		${CORONA_ROOT}/external/lpng1256/pngrio.c
-		${CORONA_ROOT}/external/lpng1256/pngrtran.c
-		${CORONA_ROOT}/external/lpng1256/pngrutil.c
-		${CORONA_ROOT}/external/lpng1256/pngset.c
-		${CORONA_ROOT}/external/lpng1256/pngtrans.c
-		${CORONA_ROOT}/external/lpng1256/pngvcrd.c
-		${CORONA_ROOT}/external/lpng1256/pngwio.c
-		${CORONA_ROOT}/external/lpng1256/pngwrite.c
-		${CORONA_ROOT}/external/lpng1256/pngwtran.c
-		${CORONA_ROOT}/external/lpng1256/pngwutil.c
+		${CORONA_ROOT}/external/libpng-1.6.59/png.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngerror.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngget.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngmem.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngpread.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngread.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngrio.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngrtran.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngrutil.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngset.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngtrans.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngwio.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngwrite.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngwtran.c
+		${CORONA_ROOT}/external/libpng-1.6.59/pngwutil.c
 
 		${CORONA_ROOT}/external/lpeg/lpeg.c
 		${Lua2CppOutputDir}/re.cpp
