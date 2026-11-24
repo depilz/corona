@@ -577,7 +577,11 @@ AppleFileBitmap::GetBits( Rtt_Allocator* context ) const
 		}
 		#endif
 
-		fData = ( fIsMask ? GetBitsGrayscale( context ) : GetBitsColor( context ) );
+		// A decode worker has no autorelease pool, and CoreGraphics autoreleases objects while it draws
+		@autoreleasepool
+		{
+			fData = ( fIsMask ? GetBitsGrayscale( context ) : GetBitsColor( context ) );
+		}
 	}
 
 	return fData;
