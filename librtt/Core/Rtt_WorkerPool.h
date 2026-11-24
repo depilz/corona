@@ -12,6 +12,7 @@
 
 #include "Core/Rtt_Assert.h"
 
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -57,6 +58,7 @@ class WorkerPool
 		};
 
 		typedef std::shared_ptr< Task > TaskPtr;
+		typedef std::chrono::steady_clock Clock;
 
 		// Largest cost first; equal costs keep submission order.
 		typedef std::multimap< size_t, TaskPtr, std::greater< size_t > > Queue;
@@ -65,6 +67,7 @@ class WorkerPool
 		typedef TaskPtr Ticket;
 
 		static const unsigned kMaxWorkers = 4;
+		static const unsigned kIdleDelayMs = 1000;
 
 		static unsigned DefaultWorkerCount()
 		{
@@ -79,14 +82,21 @@ class WorkerPool
 
 	public:
 		// The hooks run on each worker thread right after it starts and right
-		// before it exits (e.g. to attach the thread to a VM).
+		// before it exits (e.g. to attach the thread to a VM). The idle hook runs
+		// on one worker, once kIdleDelayMs have passed since the end of the last
+		// job with none queued or running, and not again until a worker has run
+		// another job.
 		explicit WorkerPool(
 			unsigned workerCount = DefaultWorkerCount(),
 			const ThreadHook& onThreadStart = ThreadHook(),
-			const ThreadHook& onThreadExit = ThreadHook() )
+			const ThreadHook& onThreadExit = ThreadHook(),
+			const ThreadHook& onIdle = ThreadHook() )
 		:	fWorkerCount( kThreadsAvailable ? workerCount : 0 ),
 			fOnThreadStart( onThreadStart ),
 			fOnThreadExit( onThreadExit ),
+			fOnIdle( onIdle ),
+			fRunningCount( 0 ),
+			fIdleHookDue( false ),
 			fStopping( false )
 		{
 		}
@@ -201,12 +211,40 @@ class WorkerPool
 		void Execute( const TaskPtr& task, std::unique_lock< std::mutex >& lock )
 		{
 			task->fState = kRunning;
+			++fRunningCount;
 			lock.unlock();
 			task->fJob();
 			task->fJob = Job();
 			lock.lock();
+			--fRunningCount;
+			fLastJobEnd = Clock::now();
 			task->fState = kDone;
 			fJobDone.notify_all();
+		}
+
+		// Caller holds fMutex.
+		bool HasWork() const { return fStopping || ! fQueue.empty(); }
+
+		// Caller holds fMutex. The earliest time the idle hook may run.
+		Clock::time_point IdleTime() const
+		{
+			const Clock::time_point start = fRunningCount > 0 ? Clock::now() : fLastJobEnd;
+			return start + std::chrono::milliseconds( +kIdleDelayMs ); // + avoids an ODR use
+		}
+
+		// Caller holds fMutex through lock. False if IdleTime() passes first.
+		bool WaitForWork( std::unique_lock< std::mutex >& lock )
+		{
+			return fWorkAvailable.wait_until( lock, IdleTime(), [this]{ return HasWork(); } );
+		}
+
+		// Caller holds fMutex through lock; the hook itself runs unlocked.
+		void RunIdleHook( std::unique_lock< std::mutex >& lock )
+		{
+			fIdleHookDue = false;
+			lock.unlock();
+			fOnIdle();
+			lock.lock();
 		}
 
 		void RunWorker()
@@ -217,7 +255,13 @@ class WorkerPool
 			std::unique_lock< std::mutex > lock( fMutex );
 			for ( ;; )
 			{
-				fWorkAvailable.wait( lock, [this]{ return fStopping || ! fQueue.empty(); } );
+				if ( fIdleHookDue && ! WaitForWork( lock ) )
+				{
+					// Another worker may have run the hook, or a job may have started or ended meanwhile
+					if ( fIdleHookDue && Clock::now() >= IdleTime() ) { RunIdleHook( lock ); }
+					continue;
+				}
+				fWorkAvailable.wait( lock, [this]{ return HasWork(); } );
 				if ( fStopping )
 				{
 					break;
@@ -225,6 +269,7 @@ class WorkerPool
 				TaskPtr task = fQueue.begin()->second;
 				fQueue.erase( fQueue.begin() );
 				Execute( task, lock );
+				fIdleHookDue = static_cast< bool >( fOnIdle );
 			}
 			lock.unlock();
 
@@ -235,12 +280,16 @@ class WorkerPool
 		const unsigned fWorkerCount;
 		const ThreadHook fOnThreadStart;
 		const ThreadHook fOnThreadExit;
+		const ThreadHook fOnIdle;
 
 		mutable std::mutex fMutex;
 		std::condition_variable fWorkAvailable;
 		std::condition_variable fJobDone;
 		Queue fQueue;
 		std::vector< std::thread > fWorkers;
+		unsigned fRunningCount; // Includes the jobs run by Wait() callers
+		Clock::time_point fLastJobEnd;
+		bool fIdleHookDue; // A worker has run a job since the last idle hook
 		bool fStopping;
 };
 

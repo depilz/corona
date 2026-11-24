@@ -43,6 +43,10 @@
 #include <set>
 #include <vector>
 
+#if defined( Rtt_ANDROID_ENV )
+	#include <dlfcn.h>
+#endif
+
 // ----------------------------------------------------------------------------
 
 namespace /*anonymous*/
@@ -289,6 +293,33 @@ DecodeAhead::Admit()
 	{
 		AsTexture( fQueue[inlineIndices[i]] )->Prefetch();
 	}
+}
+
+#if defined( Rtt_ANDROID_ENV )
+// Memory freed after a decode burst can stay resident: up to tens of MB on a Galaxy S20 FE.
+void
+ReleaseFreeMemory()
+{
+	// mallopt() exists since API 26; before API 28 it rejects M_PURGE
+	typedef int (*Mallopt)( int param, int value );
+	const int kPurge = -101;
+	const Mallopt mallopt = reinterpret_cast< Mallopt >( dlsym( RTLD_DEFAULT, "mallopt" ) );
+	if ( mallopt )
+	{
+		mallopt( kPurge, 0 );
+	}
+}
+#endif
+
+WorkerPool*
+CreateDecodePool( Rtt_Allocator* allocator )
+{
+	const WorkerPool::ThreadHook none;
+	WorkerPool::ThreadHook onIdle;
+#if defined( Rtt_ANDROID_ENV )
+	onIdle = ReleaseFreeMemory;
+#endif
+	return Rtt_NEW( allocator, WorkerPool( WorkerPool::DefaultWorkerCount(), none, none, onIdle ) );
 }
 
 } // anonymous namespace
@@ -1188,7 +1219,7 @@ Renderer::Swap()
     {
         if ( ! fDecodePool )
         {
-            fDecodePool = Rtt_NEW( fAllocator, WorkerPool );
+            fDecodePool = CreateDecodePool( fAllocator );
         }
         if ( fDecodePool->WorkerCount() > 0 )
         {
