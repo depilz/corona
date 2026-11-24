@@ -34,6 +34,7 @@ class AndroidTimer : public PlatformTimer
 		virtual void Stop();
 		virtual void SetInterval( U32 milliseconds );
 		virtual bool IsRunning() const;
+		virtual bool SupportsFrameRate( U8 fps ) const;
 
 	private:
 		bool		fRunning;

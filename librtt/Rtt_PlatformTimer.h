@@ -32,6 +32,7 @@ class PlatformTimer
 		virtual void Stop() = 0;
 		virtual void SetInterval( U32 milliseconds ) = 0;
 		virtual bool IsRunning() const = 0;
+		virtual bool SupportsFrameRate( U8 fps ) const { return fps <= 60; }
 
 		// Problem: On iOS, when the screen locks and the display turns off,
 		// CADisplayLink timers stop firing.

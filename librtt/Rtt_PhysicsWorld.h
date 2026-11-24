@@ -47,7 +47,7 @@ class PhysicsWorld
 		~PhysicsWorld();
 
 	public:
-		void Initialize( float frameInterval );
+		void Initialize( float frameInterval, bool followsRealTime );
 
 	public:
 		void WillDestroyDisplay();
@@ -100,6 +100,10 @@ class PhysicsWorld
 		void StepWorld( double elapsedMS );
 
 	private:
+		void ResetRealTime();
+		S32 CountRealTimeSteps( double elapsedMS );
+
+	private:
 		Rtt_Allocator& fAllocator;
 		b2GLESDebugDraw *fWorldDebugDraw;
 		b2DestructionListener *fWorldDestructionListener;
@@ -116,6 +120,10 @@ class PhysicsWorld
 		float fTimeScale;
 		float fTimePrevious;
 		float fTimeRemainder;
+		bool fFollowsRealTime;
+		bool fIsTimeStepDefault;
+		double fRealTimePrevious;
+		double fRealTimeRemainder;
 
 		//! false: Contact points are reported in local-space.
 		//! true: Contact points are reported in content-space.

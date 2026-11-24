@@ -32,6 +32,9 @@ namespace Rtt
 const S32 kVelocityIterations = 8;
 const S32 kPositionIterations = 3;
 
+const S32 kMaxRealTimeSteps = 4;
+const double kRealTimeLeak = 0.02;
+
 // ----------------------------------------------------------------------------
 
 class PhysicsDestructionListener : public b2DestructionListener
@@ -78,7 +81,11 @@ PhysicsWorld::PhysicsWorld( Rtt_Allocator& allocator )
 	fTimeStep( -1.0f ), // Set time step equal to frame interval
 	fTimeScale( 1.0f ),
 	fTimePrevious( -1.f ),
-	fTimeRemainder( 0.0f )
+	fTimeRemainder( 0.0f ),
+	fFollowsRealTime( false ),
+	fIsTimeStepDefault( true ),
+	fRealTimePrevious( -1. ),
+	fRealTimeRemainder( 0. )
 {
 }
 
@@ -93,11 +100,12 @@ PhysicsWorld::~PhysicsWorld()
 }
 
 void
-PhysicsWorld::Initialize( float frameInterval )
+PhysicsWorld::Initialize( float frameInterval, bool followsRealTime )
 {
 	Rtt_ASSERT( fFrameInterval < 0.f );
 
 	fFrameInterval = frameInterval;
+	fFollowsRealTime = followsRealTime;
 }
 
 void
@@ -159,6 +167,11 @@ PhysicsWorld::StartWorld( Runtime& runtime, bool noSleep )
 		b2BodyDef bd;
 		bd.userData = const_cast< void* >( LuaLibPhysics::GetGroundBodyUserdata() );
 		fGroundBody = fWorld->CreateBody(&bd);
+	}
+
+	if ( ! IsProperty( kIsWorldRunning ) )
+	{
+		ResetRealTime();
 	}
 
 	SetProperty( kIsWorldRunning, true );
@@ -231,6 +244,9 @@ PhysicsWorld::SetProperty( Properties mask, bool value )
 void
 PhysicsWorld::SetTimeStep( float newValue )
 {
+	fIsTimeStepDefault = ( newValue < 0.f );
+	ResetRealTime();
+
 	if ( newValue > 0.f )
 	{
 		fTimeStep = newValue;
@@ -304,6 +320,44 @@ PhysicsWorld::DebugDraw( Renderer &renderer ) const
 }
 
 void
+PhysicsWorld::ResetRealTime()
+{
+	fRealTimePrevious = -1.;
+	fRealTimeRemainder = 0.;
+}
+
+S32
+PhysicsWorld::CountRealTimeSteps( double elapsedMS )
+{
+	const double dt = fFrameInterval;
+	const double tPrevious = fRealTimePrevious;
+	fRealTimePrevious = elapsedMS * 0.001;
+
+	if ( tPrevious < 0. )
+	{
+		return 1;
+	}
+
+	const double elapsed = fRealTimePrevious - tPrevious;
+	const double accumulated = fRealTimeRemainder + elapsed;
+	const double roundedSteps = floor( accumulated / dt + 0.5 );
+	if ( roundedSteps > kMaxRealTimeSteps )
+	{
+		fRealTimeRemainder = 0.;
+		return kMaxRealTimeSteps;
+	}
+
+	const S32 numSteps = Max( (S32)roundedSteps, (S32)1 );
+	const double remainder = Max( accumulated - numSteps * dt, -dt );
+
+	// Without this leak, a display just off 120 Hz takes a visible double step each time the remainder fills up
+	const double leak = kRealTimeLeak * elapsed;
+	fRealTimeRemainder = ( remainder > 0. ? Max( remainder - leak, 0. ) : Min( remainder + leak, 0. ) );
+
+	return numSteps;
+}
+
+void
 PhysicsWorld::StepWorld( double elapsedMS )
 {
 	if ( fWorld && IsProperty( kIsWorldRunning ) )
@@ -315,7 +369,24 @@ PhysicsWorld::StepWorld( double elapsedMS )
 		b2World& world = * fWorld;
 
 		float dt = GetTimeStep();
-		if ( dt > Rtt_REAL_0 )
+		if ( fFollowsRealTime && fIsTimeStepDefault )
+		{
+			const S32 numSteps = CountRealTimeSteps( elapsedMS );
+
+			// Box2D would clear forces after the first step, so a force applied once per frame would act on only one of them
+			const bool autoClearForces = world.GetAutoClearForces();
+			world.SetAutoClearForces( false );
+			for ( S32 i = 0; i < numSteps && IsProperty( kIsWorldRunning ); i++ )
+			{
+				world.Step( fFrameInterval * fTimeScale, velocityIterations, positionIterations );
+			}
+			if ( autoClearForces )
+			{
+				world.ClearForces();
+			}
+			world.SetAutoClearForces( autoClearForces );
+		}
+		else if ( dt > Rtt_REAL_0 )
 		{
 			// Simulation timesteps are driven by the render frame rate
 			world.Step( dt * fTimeScale, velocityIterations, positionIterations );

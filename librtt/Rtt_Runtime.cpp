@@ -905,10 +905,10 @@ Runtime::ReadConfig( lua_State *L )
 
 	lua_getfield( L, -1, "fps" );
 	int fps = (int) lua_tointeger( L, -1 );
-	if ( 60 == fps )	// Besides default (30), only 60 fps is supported
+	if ( 60 == fps || ( 120 == fps && fTimer && fTimer->SupportsFrameRate( 120 ) ) )	// Besides default (30), only 60 fps and, if the timer supports it, 120 fps
 	{
 		Rtt_ASSERT( ! IsProperty( kIsApplicationLoaded ) );
-		fFPS = 60;
+		fFPS = (U8)fps;
 	}
 	lua_pop( L, 1 );
 
@@ -1390,7 +1390,7 @@ Runtime::BeginRunLoop()
 	const U32 kFps = fFPS;
 	const U32 kInterval = 1000 / kFps;
 
-	fPhysicsWorld->Initialize( GetFrameInterval() );
+	fPhysicsWorld->Initialize( GetFrameInterval(), 120 == kFps );
 
 	fDisplay->SetDelegate( this );
 	fDisplay->Start();
