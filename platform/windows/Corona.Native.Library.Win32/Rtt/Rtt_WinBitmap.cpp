@@ -511,6 +511,20 @@ WinFileBitmap::Lock( Rtt_Allocator* context )
 	fView.Close();
 }
 
+// Lock() decodes fBitmap into fData and deletes it, so a held fBitmap means undecoded
+bool
+WinFileBitmap::IsLazyUndecoded() const
+{
+	return NULL != fBitmap;
+}
+
+// Lock() only uses GDI+ on its own Bitmap and stream, which decode in parallel on separate threads
+bool
+WinFileBitmap::CanDecodeOffThread() const
+{
+	return true;
+}
+
 U32
 WinFileBitmap::SourceWidth() const
 {
@@ -680,6 +694,13 @@ PlatformBitmap::Format
 WinFileGrayscaleBitmap::GetFormat() const
 {
 	return kMask;
+}
+
+// Decodes in its constructor, never in Lock()
+bool
+WinFileGrayscaleBitmap::CanDecodeOffThread() const
+{
+	return false;
 }
 
 #ifdef Rtt_USE_GDIPLUS_RENDERER
