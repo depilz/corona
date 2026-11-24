@@ -102,6 +102,8 @@ class AppleFileBitmap : public AppleBitmap
 		virtual bool IsProperty( PropertyMask mask ) const;
 		virtual void SetProperty( PropertyMask mask, bool newValue );
 		virtual PlatformBitmap::Orientation GetOrientation() const;
+		virtual bool IsLazyUndecoded() const;
+		virtual bool CanDecodeOffThread() const;
 
 	private:
 		struct CGImage* fImage;
