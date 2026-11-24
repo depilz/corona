@@ -1222,6 +1222,8 @@ ShaderFactory::DefineEffect( lua_State *L, int index )
         
 		const char *fullName = lua_pushfstring( L, "%s.%s", group, name );
 
+		DiscardUnusedPrototype( category, fullName ); // precompiling must not stop an effect from being redefined
+
 		if ( NULL == FindPrototype( category, fullName, 0 )
 			 && ! ShaderBuiltin::Exists( category, fullName ) )
 		{
@@ -1351,6 +1353,7 @@ bool ShaderFactory::UndefineEffect( lua_State *L, int nameIndex )
     }
     
     // If the effect was ever instantiated, remove its prototype.
+    fUnusedPrototypes.erase( fullName );
     lua_getfield( factoryL, LUA_REGISTRYINDEX, info.fCategoryName ); // kernel, categoryFuncs
 
     if (!lua_isnil( factoryL, -1 ))
@@ -1540,14 +1543,44 @@ ShaderFactory::PrecompileGraphNodes( int graphIndex, lua_State *warnL, std::set<
     lua_pop( L, 1 );
 }
 
+static std::string
+PrototypeKey( ShaderTypes::Category category, const char *name )
+{
+    return std::string( ShaderTypes::StringForCategory( category ) ) + "." + name;
+}
+
+void
+ShaderFactory::DiscardUnusedPrototype( ShaderTypes::Category category, const char *name )
+{
+    if ( 0 == fUnusedPrototypes.erase( PrototypeKey( category, name ) ) )
+    {
+        return;
+    }
+
+    lua_State *L = fL;
+
+    PushTable( L, ShaderTypes::StringForCategory( category ) );
+    lua_pushnil( L );
+    lua_setfield( L, -2, name ); // Lua owns the prototype and will finalize it
+    lua_pop( L, 1 );
+}
+
 void
 ShaderFactory::PrecompilePrototype( ShaderTypes::Category category, const char *name )
 {
+    const std::string key = PrototypeKey( category, name );
+    const bool isUnused = NULL == FindPrototype( category, name, 0 ) || 0 != fUnusedPrototypes.count( key );
+
     Shader *shader = FindOrLoad( category, name ); // a clone; its prototype stays registered
 
     if ( ! shader )
     {
         return;
+    }
+
+    if ( isUnused )
+    {
+        fUnusedPrototypes.insert( key ); // FindOrLoad marked it as used
     }
 
     SharedPtr< ShaderResource > resource( shader->GetData()->GetShaderResource() );
@@ -2081,6 +2114,11 @@ ShaderFactory::FindOrLoadGraph( ShaderTypes::Category category, const char *name
 {
     ShaderComposite *result = NULL;
 
+    if ( name )
+    {
+        fUnusedPrototypes.erase( PrototypeKey( category, name ) );
+    }
+
 	const ShaderComposite *prototype = (ShaderComposite*)FindPrototype( category, name, localStubsIndex );
 	if ( prototype )
     {
@@ -2136,8 +2174,11 @@ ShaderFactory::PushList( lua_State *L, ShaderTypes::Category category ) const
 //                    (const Shader *)CoronaLuaToUserdata( L, -1 );
 
                 const char *name = lua_tostring( factoryL, -2 );
-                lua_pushstring( L, name );
-                lua_rawseti( L, index, base++ );
+                if ( 0 == fUnusedPrototypes.count( PrototypeKey( category, name ) ) ) // list only what was used
+                {
+                    lua_pushstring( L, name );
+                    lua_rawseti( L, index, base++ );
+                }
             }
 
             // removes 'value'; keeps 'key' for next iteration

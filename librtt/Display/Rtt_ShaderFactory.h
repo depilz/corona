@@ -127,6 +127,7 @@ class ShaderFactory
         bool Precompile( const char *fullName, lua_State *warnL, std::set< std::string >& visited );
         void PrecompileGraphNodes( int graphIndex, lua_State *warnL, std::set< std::string >& visited );
         void PrecompilePrototype( ShaderTypes::Category category, const char *name );
+        void DiscardUnusedPrototype( ShaderTypes::Category category, const char *name );
     
 	public:
 		bool DefineEffect( lua_State *L, int shaderIndex );
@@ -168,6 +169,7 @@ class ShaderFactory
 
 	private:
 		Rtt_Allocator *fAllocator;
+		std::set< std::string > fUnusedPrototypes; // "category.name", precompiled but not used by any object yet
 		Shader *fDefaultShader;
 		mutable Shader *fDefaultColorShader;
 		lua_State *fL;
