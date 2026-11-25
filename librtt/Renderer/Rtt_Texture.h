@@ -105,6 +105,9 @@ class Texture : public CPUResource
 		void SetTarget( bool newValue ){ fIsTarget = newValue; }
 		bool IsTarget() const { return fIsTarget; }
 
+		// True when the last GetData() found no pixels to upload.
+		virtual bool LoadFailed() const { return false; }
+
 	private:
 		bool fIsRetina;
 		bool fIsTarget;

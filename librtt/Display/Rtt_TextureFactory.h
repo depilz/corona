@@ -11,6 +11,7 @@
 #define _Rtt_TextureResource_H__
 
 #include "Core/Rtt_SharedPtr.h"
+#include "Renderer/Rtt_RenderTypes.h"
 #include "Renderer/Rtt_Texture.h"
 #include "Renderer/Rtt_VideoSource.h"
 #include "Display/Rtt_TextureResource.h"
@@ -124,6 +125,13 @@ class TextureFactory
 		void WillRemoveTexture( const TextureResource& resource );
 		S32 GetTextureMemoryUsed() const { return fTextureMemoryUsed; }
 
+	// Optional cache of idle file textures, bounded by a texture memory budget in bytes (0 = off)
+	public:
+		void SetCacheBudget( S32 bytes );
+		S32 GetCacheBudget() const { return fCacheBudget; }
+		void SweepCache();
+		void EmptyIdleCache();
+
 	protected:
 		class CacheEntry
 		{
@@ -179,7 +187,50 @@ class TextureFactory
 		VideoSource fVideoSource;
 		
 		S32 fTextureMemoryUsed;
-		
+
+	private:
+		struct CacheInputs
+		{
+			U32 flags;
+			bool isMask;
+			bool isRetina;
+			RenderTypes::TextureFilter magFilter;
+			RenderTypes::TextureFilter minFilter;
+			RenderTypes::TextureWrap wrapX;
+			RenderTypes::TextureWrap wrapY;
+			bool mipmaps;
+
+			bool operator==( const CacheInputs& rhs ) const;
+		};
+
+		struct PendingTexture
+		{
+			WeakPtr< TextureResource > resource;
+			CacheInputs inputs;
+			bool wasSeenUploaded;
+		};
+
+		struct CachedTexture
+		{
+			SharedPtr< TextureResource > resource;
+			CacheInputs inputs;
+			U32 lastUsed;
+		};
+
+		typedef std::map< std::string, PendingTexture > PendingTextures;
+		typedef std::map< std::string, CachedTexture > CachedTextures;
+
+		CacheInputs MakeCacheInputs( U32 flags, bool isMask, bool isRetina, bool mipmaps ) const;
+		void DropCachedTextureIfStale( const std::string& key, U32 flags, bool isMask, bool isRetina );
+		void PromotePendingTextures();
+		void StampAndDropCachedTextures();
+		void EnforceCacheBudget();
+		void DropCacheState( const std::string& key );
+
+		S32 fCacheBudget;
+		U32 fCacheSweepCount;
+		PendingTextures fPendingTextures;
+		CachedTextures fCachedTextures;
 };
 
 // ----------------------------------------------------------------------------

@@ -25,6 +25,9 @@
 #include "Display/Rtt_TextureResourceCapture.h"
 #include "Display/Rtt_TextureResourceExternal.h"
 
+#include <algorithm>
+#include <vector>
+
 #include "Rtt_FilePath.h"
 #include "Rtt_MPlatform.h"
 #include "Rtt_Runtime.h"
@@ -45,7 +48,9 @@ TextureFactory::TextureFactory( Display& display )
 	fVideo(),
 	fVideoSource(kCamera),
 	fTextureMemoryUsed( 0 ),
-	fCreateQueue( display.GetAllocator() )
+	fCreateQueue( display.GetAllocator() ),
+	fCacheBudget( 0 ),
+	fCacheSweepCount( 0 )
 {
 }
 
@@ -89,6 +94,19 @@ IsRequestingMipmaps( U32 flags, const DisplayDefaults& defaults )
 	}
 
 	return defaults.GetMipmaps();
+}
+
+static bool
+ShouldMipmap( U32 flags, bool isMask, U32 width, U32 height, const DisplayDefaults& defaults )
+{
+	return IsRequestingMipmaps( flags, defaults ) && ! isMask && Display::SupportsMipmaps( width, height );
+}
+
+// Only the cache holds it. Read through a reference: a SharedPtr copy adds one.
+static bool
+IsIdle( const SharedPtr< TextureResource >& resource )
+{
+	return 1 == resource.GetStrongCount();
 }
 
 PlatformBitmap *
@@ -154,10 +172,7 @@ TextureFactory::CreateBitmap(
 	}
 
 	// The properties set above can swap the width and height, so mipmaps are decided after them.
-	pBitmap->SetMipmaps(
-		IsRequestingMipmaps( flags, display.GetDefaults() )
-		&& ! convertToGrayscale
-		&& Display::SupportsMipmaps( pBitmap->Width(), pBitmap->Height() ) );
+	pBitmap->SetMipmaps( ShouldMipmap( flags, convertToGrayscale, pBitmap->Width(), pBitmap->Height(), display.GetDefaults() ) );
 
 	return pBitmap;
 }
@@ -293,6 +308,7 @@ TextureFactory::FindOrCreate(
 
 	// Lookup cache
 	std::string key( filePath.GetString() );
+	DropCachedTextureIfStale( key, flags, isMask, isRetina );
 	result = Find( key );
 
 	// Create on a cache miss
@@ -305,6 +321,13 @@ TextureFactory::FindOrCreate(
 		if ( bitmap )
 		{
 			result = CreateAndAdd( key, bitmap, true, isRetina );
+
+			// Cached only once uploaded (SweepCache): an image dropped before its first draw is never decoded for the cache.
+			if ( fCacheBudget > 0 && MPlatform::kResourceDir == baseDir )
+			{
+				PendingTexture pending = { result, MakeCacheInputs( flags, isMask, isRetina, bitmap->GetMipmaps() ), false };
+				fPendingTextures[key] = pending;
+			}
 		}
 	}
 
@@ -546,6 +569,9 @@ TextureFactory::DidAddTexture( const TextureResource& resource )
 		const Texture& texture = resource.GetTexture();
 		size_t numTextureBytes = texture.GetFootprintInBytes();
 		fTextureMemoryUsed += numTextureBytes;
+
+		// Safe between Preload and Swap: only uploaded textures are cached, so none is in the renderer's create queue.
+		EnforceCacheBudget();
 	}
 }
 
@@ -652,6 +678,7 @@ void TextureFactory::Retain(const SharedPtr< TextureResource > &res)
 void TextureFactory::Release( const std::string &key )
 {
 	fOwnedTextures.erase(key);
+	DropCacheState( key );
 }
 
 	
@@ -660,6 +687,8 @@ void TextureFactory::ReleaseByType( TextureResource::TextureResourceType type)
 	if ( TextureResource::kTextureResource_Any == type )
 	{
 		fOwnedTextures.clear();
+		fPendingTextures.clear();
+		fCachedTextures.clear();
 	}
 	else
 	{
@@ -673,6 +702,7 @@ void TextureFactory::ReleaseByType( TextureResource::TextureResourceType type)
 				OwnedTextures::iterator toerase = it;
 				// iterate to next element before erasing.
 				++it;
+				DropCacheState( toerase->first );
 				// C++ map has guarantee that erasing iterator would not make invalid other iterators
 				fOwnedTextures.erase(toerase);
 			}
@@ -739,6 +769,189 @@ void TextureFactory::UpdateTextures(Renderer &renderer)
 	}
 	
 	fUpdateTextures.clear();
+}
+
+bool
+TextureFactory::CacheInputs::operator==( const CacheInputs& rhs ) const
+{
+	return flags == rhs.flags
+		&& isMask == rhs.isMask
+		&& isRetina == rhs.isRetina
+		&& magFilter == rhs.magFilter
+		&& minFilter == rhs.minFilter
+		&& wrapX == rhs.wrapX
+		&& wrapY == rhs.wrapY
+		&& mipmaps == rhs.mipmaps;
+}
+
+TextureFactory::CacheInputs
+TextureFactory::MakeCacheInputs( U32 flags, bool isMask, bool isRetina, bool mipmaps ) const
+{
+	const DisplayDefaults& defaults = fDisplay.GetDefaults();
+
+	CacheInputs result;
+	result.flags = flags & ~( PlatformBitmap::kRequestMipmaps | PlatformBitmap::kRequestNoMipmaps );
+	result.isMask = isMask;
+	result.isRetina = isRetina;
+	result.magFilter = defaults.GetMagTextureFilter();
+	result.minFilter = defaults.GetMinTextureFilter();
+	result.wrapX = defaults.GetTextureWrapX();
+	result.wrapY = defaults.GetTextureWrapY();
+	result.mipmaps = mipmaps;
+	return result;
+}
+
+// The key is only the path, so an idle texture is reused only if this request would create the same texture.
+void
+TextureFactory::DropCachedTextureIfStale( const std::string& key, U32 flags, bool isMask, bool isRetina )
+{
+	CachedTextures::iterator it = fCachedTextures.find( key );
+	if ( it == fCachedTextures.end() || ! IsIdle( it->second.resource ) )
+	{
+		return;
+	}
+
+	const CachedTexture& cached = it->second;
+	const PlatformBitmap *bitmap = cached.resource->GetBitmap();
+	const bool mipmaps = ShouldMipmap( flags, isMask, bitmap->Width(), bitmap->Height(), fDisplay.GetDefaults() );
+	const bool isSameTexture = cached.inputs == MakeCacheInputs( flags, isMask, isRetina, mipmaps );
+	if ( ! isSameTexture || cached.resource->GetTexture().LoadFailed() )
+	{
+		fCachedTextures.erase( it );
+	}
+}
+
+void
+TextureFactory::SetCacheBudget( S32 bytes )
+{
+	fCacheBudget = Max( bytes, 0 );
+	if ( 0 == fCacheBudget )
+	{
+		fPendingTextures.clear();
+		fCachedTextures.clear();
+		return;
+	}
+
+	EnforceCacheBudget();
+}
+
+// Call once per render, after the renderer's Swap: a GPU resource then means the texture was uploaded.
+void
+TextureFactory::SweepCache()
+{
+	if ( 0 == fCacheBudget )
+	{
+		return;
+	}
+
+	++fCacheSweepCount;
+	PromotePendingTextures();
+	StampAndDropCachedTextures();
+	EnforceCacheBudget();
+}
+
+void
+TextureFactory::EmptyIdleCache()
+{
+	CachedTextures::iterator it = fCachedTextures.begin();
+	while ( it != fCachedTextures.end() )
+	{
+		if ( IsIdle( it->second.resource ) )
+		{
+			fCachedTextures.erase( it++ );
+		}
+		else
+		{
+			++it;
+		}
+	}
+}
+
+void
+TextureFactory::PromotePendingTextures()
+{
+	// Only where Lua and render share an entry: async render (Mac, Win32) renders a static scene once.
+	const bool isPromotionDelayed = ! fDisplay.GetRuntime().IsProperty( Runtime::kRenderAsync );
+
+	PendingTextures::iterator it = fPendingTextures.begin();
+	while ( it != fPendingTextures.end() )
+	{
+		PendingTexture& pending = it->second;
+		SharedPtr< TextureResource > resource( pending.resource );
+		const bool isNotUploaded = resource.NotNull() && NULL == resource->GetTexture().GetGPUResource();
+
+		// Promoted one sweep after upload: where Lua and render share an entry, an object removed in it holds its texture until the entry ends.
+		const bool isFirstSeenUploaded = isPromotionDelayed && resource.NotNull() && ! isNotUploaded && ! pending.wasSeenUploaded;
+		if ( isNotUploaded || isFirstSeenUploaded )
+		{
+			pending.wasSeenUploaded = isFirstSeenUploaded;
+			++it;
+			continue;
+		}
+
+		if ( resource.NotNull() && ! resource->GetTexture().LoadFailed() )
+		{
+			CachedTexture cached = { resource, pending.inputs, fCacheSweepCount };
+			fCachedTextures[it->first] = cached;
+		}
+		fPendingTextures.erase( it++ );
+	}
+}
+
+void
+TextureFactory::StampAndDropCachedTextures()
+{
+	CachedTextures::iterator it = fCachedTextures.begin();
+	while ( it != fCachedTextures.end() )
+	{
+		CachedTexture& cached = it->second;
+		const Texture& texture = cached.resource->GetTexture();
+		const bool isIdle = IsIdle( cached.resource );
+		const bool isUseless = texture.LoadFailed() || ( isIdle && NULL == texture.GetGPUResource() );
+		if ( isUseless )
+		{
+			fCachedTextures.erase( it++ );
+			continue;
+		}
+
+		if ( ! isIdle )
+		{
+			cached.lastUsed = fCacheSweepCount;
+		}
+		++it;
+	}
+}
+
+// Evicts idle textures, least recently used first, until texture memory fits the budget. Live textures are never evicted.
+void
+TextureFactory::EnforceCacheBudget()
+{
+	if ( 0 == fCacheBudget || fTextureMemoryUsed <= fCacheBudget )
+	{
+		return;
+	}
+
+	std::vector< std::pair< U32, std::string > > idleByAge;
+	for ( CachedTextures::const_iterator it = fCachedTextures.begin(); it != fCachedTextures.end(); ++it )
+	{
+		if ( IsIdle( it->second.resource ) )
+		{
+			idleByAge.push_back( std::make_pair( it->second.lastUsed, it->first ) );
+		}
+	}
+	std::sort( idleByAge.begin(), idleByAge.end() );
+
+	for ( size_t i = 0; i < idleByAge.size() && fTextureMemoryUsed > fCacheBudget; i++ )
+	{
+		fCachedTextures.erase( idleByAge[i].second );
+	}
+}
+
+void
+TextureFactory::DropCacheState( const std::string& key )
+{
+	fPendingTextures.erase( key );
+	fCachedTextures.erase( key );
 }
 	
 

@@ -21,6 +21,8 @@
 #include "Display/Rtt_Display.h"
 #include "librtt/Display/Rtt_Display.h"
 #include "librtt/Display/Rtt_Scene.h"
+#include "librtt/Display/Rtt_TextureFactory.h"
+#include "librtt/Renderer/Rtt_Renderer.h"
 #include "librtt/Display/Rtt_StageObject.h"
 #include "librtt/Rtt_Runtime.h"	
 #include "librtt/Rtt_Event.h"
@@ -56,6 +58,7 @@
 #include "AndroidGLView.h"
 #include "NativeToJavaBridge.h"
 
+#include <EGL/egl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -791,6 +794,19 @@ JavaToNativeBridge::Pause()
 	// Suspend the Corona runtime.
 	fRuntime->Suspend();
 	fNativeToJavaBridge->OnRuntimeSuspended();
+	// Android 14+ sends no memory warning to a running app, so pause is where idle cached textures go.
+	Rtt::Display& display = fRuntime->GetDisplay();
+	if ( display.GetTextureFactory().GetCacheBudget() > 0 )
+	{
+		display.GetTextureFactory().EmptyIdleCache();
+		display.GetScene().ForceCollect();
+
+		// A GL delete without a current context leaks the name, so then the deletes wait for the next Swap.
+		if ( eglGetCurrentContext() != EGL_NO_CONTEXT )
+		{
+			display.GetRenderer().DrainDestroyQueue();
+		}
+	}
 
 	// Free up memory by deleting loaded resources such as bitmaps and audio data. This will help prevent this
 	// app from being terminated by the operating system if there is not enough memory to load the next activity.

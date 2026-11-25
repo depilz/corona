@@ -33,6 +33,8 @@
 #include "Rtt_PlatformTimer.h"
 #include "Rtt_Scheduler.h"
 #include "Display/Rtt_TextObject.h"
+#include "Display/Rtt_Scene.h"
+#include "Display/Rtt_TextureFactory.h"
 #include "Rtt_LuaFrameworks.h"
 #include "Rtt_HTTPClient.h"
 
@@ -1719,6 +1721,15 @@ Runtime::Collect()
 
 	// Display objects
 	GroupObject::CollectUnreachables( vm.L(), GetDisplay().GetScene(), * GetDisplay().Orphanage() );
+
+	TextureFactory& factory = GetDisplay().GetTextureFactory();
+	if ( factory.GetCacheBudget() > 0 )
+	{
+		// No GL call here: iOS can warn while suspended, so the GL deletes wait for the next Swap.
+		factory.EmptyIdleCache();
+		GetDisplay().GetScene().ForceCollect();
+		GetDisplay().GetScene().Invalidate();
+	}
 }
 
 void
