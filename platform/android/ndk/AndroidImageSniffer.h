@@ -70,21 +70,24 @@ class AndroidImageSniffer
 			kUnknownFormat,
 			/// The structure runs past the end, or the file lacks its JPEG EOI or PNG IEND end.
 			kTruncated,
-			/// A segment, chunk or frame header breaks the format's rules, or a PNG chunk before
-			/// the first IDAT has a wrong CRC.
+			/// A segment, chunk or frame header breaks the format's rules or is unknown, or a PNG chunk
+			/// before the first IDAT has a wrong CRC.
 			kMalformed,
-			/// No JPEG SOF0/SOF1/SOF2 frame before SOS, or a frame with an unsupported precision.
+			/// No JPEG SOF0/SOF1/SOF2 frame before SOS, or a frame with an unsupported precision
+			/// or component count.
 			kUnsupportedFrame,
 			/// An Exif orientation other than 1 in IFD0 or the Exif sub-IFD.
 			kExifOrientation,
-			/// An Exif block whose TIFF structure cannot be read.
+			/// An Exif block whose TIFF structure cannot be read, or a second Exif block or sub-IFD.
 			kExifMalformed,
 			/// An interlaced PNG.
 			kInterlaced,
 			/// A PNG iCCP, cICP or eXIf chunk before the first IDAT.
 			kColorOrExifChunk,
 			/// A PNG sBIT chunk before the first IDAT on API level 30 or lower.
-			kSignificantBits
+			kSignificantBits,
+			/// More than 1 MiB before the image data, which the checks do not read.
+			kHeaderTooLong
 		};
 
 		/// What the checks found.
@@ -95,8 +98,6 @@ class AndroidImageSniffer
 			/// Size from the JPEG SOF or PNG IHDR; 0 until that header was read.
 			int width;
 			int height;
-			/// True for a PNG with an alpha channel or a tRNS chunk; false for a JPEG.
-			bool hasAlpha;
 
 			bool IsEligible() const { return kEligible == verdict; }
 		};
