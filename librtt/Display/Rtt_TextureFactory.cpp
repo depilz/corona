@@ -30,6 +30,11 @@
 #include "Rtt_Runtime.h"
 #include "CoronaLua.h"
 
+#ifdef Rtt_AUTHORING_SIMULATOR
+	#include "Core/Rtt_FileSystem.h"
+	#include <string.h>
+#endif
+
 // ----------------------------------------------------------------------------
 
 namespace Rtt
@@ -105,6 +110,24 @@ TextureFactory::CreateBitmap(
 		if (!(((width != 0) && !(width & (width - 1))) && ((height != 0) && !(height & (height - 1)))))
 		{
 			Rtt_TRACE_SIM( ( "WARNING: The dimensions of the image (%s) you provided for a repeating fill are not in a power-of-two. You might have some graphical issues on an actual device", filePath ) );
+		}
+	}
+
+	// Warn on a PNG whose IHDR bit depth (byte 24) is 16.
+	FILE *file = Rtt_FileOpen( filePath, "rb" );
+	if ( file )
+	{
+		static const U8 kPngSignature[] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+		U8 header[26];
+		const size_t bytesRead = Rtt_FileRead( header, 1, sizeof( header ), file );
+		Rtt_FileClose( file );
+
+		if ( bytesRead == sizeof( header )
+			 && 0 == memcmp( header, kPngSignature, sizeof( kPngSignature ) )
+			 && 0 == memcmp( header + 12, "IHDR", 4 )
+			 && 16 == header[24] )
+		{
+			Rtt_TRACE_SIM( ( "WARNING: The image (%s) has 16 bits per channel. The engine converts it to 8 bits per channel when loading, so the extra depth only costs file size and load time. Re-export it at 8 bits per channel.\n", filePath ) );
 		}
 	}
 
