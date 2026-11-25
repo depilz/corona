@@ -405,6 +405,8 @@ namespace Rtt
 	{
 		int fps = fContext->GetFPS();
 		float frameDuration = 1000.0f / fps;
+		const chrono::nanoseconds period120(1000000000 / 120);
+		chrono::steady_clock::time_point due = chrono::steady_clock::now();
 
 		// main app loop
 		while (1)
@@ -424,6 +426,19 @@ namespace Rtt
 
 			int advance_time = (int)(Rtt_AbsoluteToMilliseconds(Rtt_GetAbsoluteTime()) - start_time);
 			//			Rtt_Log("advance_time %d\n", advance_time);
+
+			// At 120 a deadline pacer: a swap blocked by vsync (swap interval 1) already took the time, so it follows slower screens.
+			if (fContext->GetFPS() == 120)
+			{
+				due += period120;
+				chrono::steady_clock::time_point now = chrono::steady_clock::now();
+				if (now - due > period120)
+				{
+					due = now;
+				}
+				this_thread::sleep_until(due);
+				continue;
+			}
 
 			// Don't hog the CPU.
 			int sleep_time = Max(frameDuration - advance_time, 1.0f);		// sleep for at least 1ms

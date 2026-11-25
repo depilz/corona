@@ -81,6 +81,7 @@ class MacPlatform : public ApplePlatform
 	public:
 		virtual MPlatformDevice& GetDevice() const;
 		virtual PlatformSurface* CreateScreenSurface() const;
+		virtual PlatformTimer* CreateTimerWithCallback( MCallback& callback ) const;
 
 	public:
 		static struct CGImage* CreateMacImage( Rtt_Allocator* pAllocator, PlatformBitmap& bitmap );

@@ -38,7 +38,7 @@ class AppleTimer : public PlatformTimer
 		typedef PlatformTimer Super;
 
 	public:
-		AppleTimer( MCallback& callback );
+		AppleTimer( MCallback& callback, id view = NULL );
 		virtual ~AppleTimer();
 
 	public:
@@ -46,6 +46,7 @@ class AppleTimer : public PlatformTimer
 		virtual void Stop();
 		virtual void SetInterval( U32 milliseconds );
 		virtual bool IsRunning() const;
+		virtual bool SupportsFrameRate( U8 fps ) const;
 
 		// Problem: On iOS, when the screen locks and the display turns off,
 		// CADisplayLink timers stop firing.
@@ -66,6 +67,10 @@ class AppleTimer : public PlatformTimer
 		U32 fInterval;
 		bool fDisplayLinkSupported;
 		U32 fSavedInterval; 
+		id fView;
+		id fScreenObserver;
+		id fWindowObserver;
+		double fTickRate;
 };
 
 // ----------------------------------------------------------------------------

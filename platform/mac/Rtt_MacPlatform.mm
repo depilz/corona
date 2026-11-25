@@ -30,6 +30,7 @@
 #include "Rtt_MacFont.h"
 #include "Rtt_PlatformInAppStore.h"
 #include "Rtt_AppleInAppStore.h"
+#include "Rtt_AppleTimer.h"
 #include "Rtt_PlatformPlayer.h"
 #include "Rtt_PlatformSimulator.h"
 #include "Rtt_PreferenceCollection.h"
@@ -495,6 +496,12 @@ PlatformSurface*
 MacPlatform::CreateScreenSurface() const
 {
 	return Rtt_NEW( Allocator(), MacViewSurface( fView ) );
+}
+
+PlatformTimer*
+MacPlatform::CreateTimerWithCallback( MCallback& callback ) const
+{
+	return Rtt_NEW( Allocator(), AppleTimer( callback, fView ) );
 }
 
 // TODO: Consolidate this with MacPlatform::SaveBitmap(). Lots of duplicate code.

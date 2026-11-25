@@ -60,22 +60,30 @@ extern "C"
 	int jsContextLoadFonts(const char* name, void* buf, int size)  { return 0; }
 	void jsContextSetClearColor(int r, int g, int b, int a) {}
 	void jsContextConfig(int w, int h) {}
+	double emscripten_get_now() { return SDL_GetTicks(); }
 #endif
 
 namespace Rtt
 {
-	static U64 s_tick = 0;
+	static double s_due = 0;
 	void TimerTickShim(void *userdata)
 	{
 		CoronaAppContext *context = (CoronaAppContext*) userdata;
-		float frameDuration = 1.0f / (float) context->getFPS();
-
-		U64 now = Rtt_AbsoluteToMilliseconds(Rtt_GetAbsoluteTime());
-		if (now - s_tick > frameDuration)		// 60fps ==> 1000/60 = 16.66666 msec
+		if (!context->IsInitialized())
 		{
-			s_tick = now;
 			context->TimerTick();
+			return;
 		}
+
+		const double kSlack = 3.0;		// ms a frame may fire early: covers rAF jitter and a coarse browser clock
+		double period = 1000.0 / context->getFPS();
+		double now = emscripten_get_now();
+		if (now + kSlack < s_due)
+		{
+			return;
+		}
+		s_due = (now - s_due > period) ? now + period : s_due + period;
+		context->TimerTick();
 	}
 
 	MouseListener::MouseListener(Runtime &runtime)
