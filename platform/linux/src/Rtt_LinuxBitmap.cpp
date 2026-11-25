@@ -17,6 +17,7 @@
 #include "Display/Rtt_Display.h"
 #include "Core/Rtt_Types.h"
 #include "Rtt_BitmapUtils.h"
+#include <cctype>
 
 namespace Rtt
 {
@@ -110,14 +111,19 @@ namespace Rtt
 	{
 		Rtt_ASSERT(fData == NULL);
 
-		// get file ext
-		int n = strlen(path);
-		if (n < 5)
+		// Extract extension after the last dot. Case-insensitive to accept .JPG, .PNG, etc.
+		const char *dot = strrchr(path, '.');
+		if (dot == NULL || dot[1] == '\0')
 		{
 			return false;
 		}
 
-		std::string ext = path + n - 4;
+		std::string ext(dot);
+		for (size_t i = 0; i < ext.size(); i++)
+		{
+			ext[i] = (char)tolower((unsigned char)ext[i]);
+		}
+
 		if (ext == ".bmp")
 		{
 			fData = bitmapUtil::loadBMP(path, fWidth, fHeight, fFormat);
@@ -139,7 +145,7 @@ namespace Rtt
 				fclose(f);
 			}
 		}
-		else if (ext == ".jpg")
+		else if (ext == ".jpg" || ext == ".jpeg")
 		{
 			FILE* f = fopen(path, "rb");
 			if (f)

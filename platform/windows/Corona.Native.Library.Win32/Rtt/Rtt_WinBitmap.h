@@ -82,7 +82,9 @@ class WinFileBitmap : public WinBitmap
 		virtual ~WinFileBitmap();
 
 	private:
-		void InitializeMembers();
+		void InitializeMembers( Rtt_Allocator &context );
+		void RetainEncodedBytes();
+		U8* DecodeEncodedBytes( const char *path );
 
 	protected:
 		float CalculateScale() const;
@@ -96,6 +98,7 @@ class WinFileBitmap : public WinBitmap
 		Rtt_INLINE bool IsPropertyInternal( PropertyMask mask ) const { return (fProperties & mask) ? true : false; }
 
 	public:
+		virtual void FreeBits() const;
 		virtual U32 Width() const;
 		virtual U32 Height() const;
 		virtual bool IsProperty( PropertyMask mask ) const;
@@ -115,9 +118,13 @@ class WinFileBitmap : public WinBitmap
 
 			HANDLE fMapping;
 			void* fData;
+			U32 fSize;
 		};
 
 	private:
+		Rtt_Allocator* fAllocator;
+		void* fEncoded; // copy of the file's bytes, so the bits can be rebuilt after FreeBits()
+		U32 fEncodedSize;
 		float fScale;
 		U8 fProperties;
 		S8 fOrientation;
