@@ -208,6 +208,7 @@ AndroidOperationResult AndroidImageDecoder::DecodeWithSystemDecoder(const char *
 		return AndroidOperationResult::FailedWith(GetAllocator(), "Image file location was not resolved.");
 	}
 
-	AndroidSystemImageDecoder systemDecoder(*this, (kPackageEntry == fFileLocation) ? &fPackageEntry : NULL);
+	AndroidSystemImageDecoder systemDecoder(
+			*this, (kPackageEntry == fFileLocation) ? &fPackageEntry : NULL, !fIsJpegFile);
 	return systemDecoder.DecodeFromFile(filePath);
 }

@@ -31,7 +31,8 @@ class AndroidZipFileEntry;
 class AndroidSystemImageDecoder : public AndroidBaseImageDecoder
 {
 	public:
-		AndroidSystemImageDecoder(const AndroidBaseImageDecoder &decoder, const AndroidZipFileEntry *packageEntry);
+		AndroidSystemImageDecoder(
+			const AndroidBaseImageDecoder &decoder, const AndroidZipFileEntry *packageEntry, bool acceptsPng);
 		virtual ~AndroidSystemImageDecoder();
 
 	protected:
@@ -39,6 +40,7 @@ class AndroidSystemImageDecoder : public AndroidBaseImageDecoder
 
 	private:
 		const AndroidZipFileEntry *fPackageEntry;
+		bool fAcceptsPng;
 };
 
 #endif // _AndroidSystemImageDecoder_H__

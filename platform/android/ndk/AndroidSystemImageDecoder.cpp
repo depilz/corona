@@ -400,8 +400,16 @@ bool DecodeWith(
 	return DecodePixels(api, decoder, isPng, (kAlphaFlagsOpaque == api.getAlphaFlags(info)), target);
 }
 
+/// Determines if the sniffed file may be taken.
+/// @param acceptsPng Set to false to refuse PNG content.
+bool IsFileAccepted(const Sniffer::Result &sniffed, bool acceptsPng)
+{
+	return sniffed.IsEligible() && (acceptsPng || (Sniffer::kFormatPng != sniffed.format));
+}
+
 /// Decodes a plain file, read through its own descriptor.
-bool DecodePlainFile(const SystemDecoderApi &api, const char *filePath, const AndroidBaseImageDecoder &settings)
+bool DecodePlainFile(
+	const SystemDecoderApi &api, const char *filePath, bool acceptsPng, const AndroidBaseImageDecoder &settings)
 {
 	ScopedFile file(filePath);
 	off_t fileSize = 0;
@@ -410,7 +418,7 @@ bool DecodePlainFile(const SystemDecoderApi &api, const char *filePath, const An
 		return false;
 	}
 	Sniffer::Result sniffed = Sniffer::Sniff(FileSource(file.GetDescriptor(), 0, (size_t)fileSize), api.apiLevel);
-	if (!sniffed.IsEligible())
+	if (!IsFileAccepted(sniffed, acceptsPng))
 	{
 		return false;
 	}
@@ -431,7 +439,8 @@ bool DecodePlainFile(const SystemDecoderApi &api, const char *filePath, const An
 /// Decodes an uncompressed entry of the APK or expansion file: its information is read with pread(),
 /// its pixels from a memory mapping of its bytes.
 bool DecodePackageEntry(
-	const SystemDecoderApi &api, const AndroidZipFileEntry &entry, const AndroidBaseImageDecoder &settings)
+	const SystemDecoderApi &api, const AndroidZipFileEntry &entry, bool acceptsPng,
+	const AndroidBaseImageDecoder &settings)
 {
 	long offset = entry.GetByteOffsetInPackage();
 	long length = entry.GetByteCountInPackage();
@@ -450,7 +459,7 @@ bool DecodePackageEntry(
 	if (settings.IsDecodingImageInfoOnly())
 	{
 		Sniffer::Result sniffed = Sniffer::Sniff(FileSource(file.GetDescriptor(), (off_t)offset, (size_t)length), api.apiLevel);
-		return sniffed.IsEligible() && ReadInfo(sniffed, settings);
+		return IsFileAccepted(sniffed, acceptsPng) && ReadInfo(sniffed, settings);
 	}
 	ScopedMapping mapping(file.GetDescriptor(), (off_t)offset, (size_t)length);
 	if (!mapping.GetBytes())
@@ -458,7 +467,7 @@ bool DecodePackageEntry(
 		return false;
 	}
 	Sniffer::Result sniffed = Sniffer::Sniff(Sniffer::MemorySource(mapping.GetBytes(), (size_t)length), api.apiLevel);
-	if (!sniffed.IsEligible())
+	if (!IsFileAccepted(sniffed, acceptsPng))
 	{
 		return false;
 	}
@@ -485,10 +494,13 @@ bool DecodePackageEntry(
 ///                     as resolved by NativeToJavaBridge::GetAssetFileLocation(), which must outlive this decoder.
 ///                     <br>
 ///                     Set to NULL if the file path given to DecodeFromFile() is a plain file.
+/// @param acceptsPng Set to false for a file named as a JPEG. Java decodes PNG content in such a file,
+///                   multiplying by alpha differently and not loading 16-bit channels.
 AndroidSystemImageDecoder::AndroidSystemImageDecoder(
-	const AndroidBaseImageDecoder &decoder, const AndroidZipFileEntry *packageEntry)
+	const AndroidBaseImageDecoder &decoder, const AndroidZipFileEntry *packageEntry, bool acceptsPng)
 :	AndroidBaseImageDecoder(decoder),
-	fPackageEntry(packageEntry)
+	fPackageEntry(packageEntry),
+	fAcceptsPng(acceptsPng)
 {
 }
 
@@ -517,7 +529,9 @@ AndroidOperationResult AndroidSystemImageDecoder::OnDecodeFromFile(const char *f
 	bool isDecoded = false;
 	if (api.isValid && IsPixelFormatRGBA())
 	{
-		isDecoded = fPackageEntry ? DecodePackageEntry(api, *fPackageEntry, *this) : DecodePlainFile(api, filePath, *this);
+		isDecoded = fPackageEntry ?
+				DecodePackageEntry(api, *fPackageEntry, fAcceptsPng, *this) :
+				DecodePlainFile(api, filePath, fAcceptsPng, *this);
 	}
 	if (!isDecoded)
 	{
