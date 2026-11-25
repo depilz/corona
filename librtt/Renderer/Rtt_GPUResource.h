@@ -54,6 +54,9 @@ class GPUResource
         // resources were destroyed due to some event such as a context loss.
         virtual void Destroy() = 0;
 
+        // Build the given variant now instead of on its first use; the default does nothing.
+        virtual void Precompile( U32 version ) {}
+
         // Return the opaque handle representing an API-specific GPU resource.
         inline Handle GetHandle() const { return fHandle; }
 

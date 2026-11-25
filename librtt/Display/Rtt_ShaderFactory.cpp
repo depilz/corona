@@ -23,6 +23,7 @@
 
 #include "Renderer/Rtt_FormatExtensionList.h"
 #include "Renderer/Rtt_Program.h"
+#include "Renderer/Rtt_Renderer.h"
 #if defined( Rtt_USE_PRECOMPILED_SHADERS )
     #include "Renderer/Rtt_ShaderBinary.h"
     #include "Renderer/Rtt_ShaderBinaryVersions.h"
@@ -1182,6 +1183,16 @@ ShaderFactory::GatherEffectStubs( lua_State *L )
     return hasStubsTable;
 }
 
+static bool
+IsPrecompileOptedOut( lua_State *L, int kernelIndex )
+{
+    lua_getfield( L, kernelIndex, "precompile" );
+    bool isOptedOut = lua_isboolean( L, -1 ) && ! lua_toboolean( L, -1 );
+    lua_pop( L, 1 );
+
+    return isOptedOut;
+}
+
 bool
 ShaderFactory::DefineEffect( lua_State *L, int index )
 {
@@ -1210,6 +1221,8 @@ ShaderFactory::DefineEffect( lua_State *L, int index )
 		}
         
 		const char *fullName = lua_pushfstring( L, "%s.%s", group, name );
+
+		DiscardUnusedPrototype( category, fullName ); // precompiling must not stop an effect from being redefined
 
 		if ( NULL == FindPrototype( category, fullName, 0 )
 			 && ! ShaderBuiltin::Exists( category, fullName ) )
@@ -1249,6 +1262,11 @@ ShaderFactory::DefineEffect( lua_State *L, int index )
 				lua_pop( factoryL, 1 ); // pop registry table
 			}
 			lua_pop( factoryL, 1 ); // pop copied table
+
+			if ( ! IsPrecompileOptedOut( L, index ) )
+			{
+				Precompile( lua_pushfstring( L, "%s.%s", ShaderTypes::StringForCategory( category ), fullName ), NULL );
+			}
 		}
 		else
 		{
@@ -1335,6 +1353,7 @@ bool ShaderFactory::UndefineEffect( lua_State *L, int nameIndex )
     }
     
     // If the effect was ever instantiated, remove its prototype.
+    fUnusedPrototypes.erase( fullName );
     lua_getfield( factoryL, LUA_REGISTRYINDEX, info.fCategoryName ); // kernel, categoryFuncs
 
     if (!lua_isnil( factoryL, -1 ))
@@ -1368,6 +1387,207 @@ bool ShaderFactory::UndefineEffect( lua_State *L, int nameIndex )
     lua_pop( factoryL, 3 ); // (clear)
     
     return true;
+}
+
+bool
+ShaderFactory::PushKernel( ShaderTypes::Category category, const char *name )
+{
+    if ( ShaderTypes::kCategoryDefault == category )
+    {
+        return false;
+    }
+
+    lua_State *L = fL;
+
+    PushTable( L, ShaderBuiltin::KeyForCategory( category ) );
+    lua_getfield( L, -1, name );
+    lua_remove( L, -2 );
+
+    if ( ! lua_iscfunction( L, -1 ) )
+    {
+        lua_pop( L, 1 );
+
+        return false;
+    }
+
+    return 0 == Corona::Lua::DoCall( L, 0, 1 );
+}
+
+static bool
+IsDependencyMissing( lua_State *L, int kernelIndex, const char *field, void *cookie )
+{
+    lua_getfield( L, kernelIndex, field );
+
+    if ( ! lua_isstring( L, -1 ) )
+    {
+        lua_pop( L, 1 );
+
+        return false;
+    }
+
+    lua_pushlightuserdata( L, cookie );
+    lua_rawget( L, LUA_REGISTRYINDEX );
+
+    bool isMissing = true;
+
+    if ( lua_istable( L, -1 ) )
+    {
+        lua_pushvalue( L, -2 );
+        lua_rawget( L, -2 );
+        isMissing = lua_isnil( L, -1 );
+        lua_pop( L, 1 );
+    }
+
+    lua_pop( L, 2 );
+
+    return isMissing;
+}
+
+bool
+ShaderFactory::Precompile( const char *fullName, lua_State *warnL )
+{
+    std::set< std::string > visited;
+
+    return Precompile( fullName, warnL, visited );
+}
+
+bool
+ShaderFactory::Precompile( const char *fullName, lua_State *warnL, std::set< std::string >& visited )
+{
+    if ( ! visited.insert( fullName ).second )
+    {
+        return true;
+    }
+
+    lua_State *L = fL;
+
+    lua_checkstack( L, LUA_MINSTACK ); // graph nodes recurse here
+
+    ShaderName shaderName( fullName );
+
+    if ( ! PushKernel( shaderName.GetCategory(), shaderName.GetName() ) )
+    {
+        if ( warnL )
+        {
+            CoronaLuaWarning( warnL, "graphics.precompileEffects(): no effect named '%s'", fullName );
+        }
+
+        return false;
+    }
+
+    int kernelIndex = lua_gettop( L );
+
+    if ( ! warnL && IsPrecompileOptedOut( L, kernelIndex ) )
+    {
+        lua_pop( L, 1 );
+
+        return false;
+    }
+
+    bool result = true;
+
+    lua_getfield( L, kernelIndex, "graph" );
+
+    if ( lua_istable( L, -1 ) )
+    {
+        PrecompileGraphNodes( lua_gettop( L ), warnL, visited );
+    }
+    else if ( IsDependencyMissing( L, kernelIndex, "shellTransform", &sShellTransformCookie )
+              || IsDependencyMissing( L, kernelIndex, "vertexExtension", &sVertexExtensionCookie )
+              || IsDependencyMissing( L, kernelIndex, "dataType", &sDataTypeCookie ) )
+    {
+        if ( warnL )
+        {
+            CoronaLuaWarning( warnL, "graphics.precompileEffects(): '%s' names a shellTransform, vertexExtension or dataType that is not registered yet; it compiles at first use", fullName );
+        }
+
+        result = false;
+    }
+    else
+    {
+        PrecompilePrototype( shaderName.GetCategory(), shaderName.GetName() );
+    }
+
+    lua_pop( L, 2 );
+
+    return result;
+}
+
+void
+ShaderFactory::PrecompileGraphNodes( int graphIndex, lua_State *warnL, std::set< std::string >& visited )
+{
+    lua_State *L = fL;
+
+    lua_getfield( L, graphIndex, "nodes" );
+
+    if ( lua_istable( L, -1 ) )
+    {
+        for ( lua_pushnil( L ); lua_next( L, -2 ); lua_pop( L, 1 ) )
+        {
+            if ( ! lua_istable( L, -1 ) )
+            {
+                continue;
+            }
+
+            lua_getfield( L, -1, "effect" );
+
+            if ( LUA_TSTRING == lua_type( L, -1 ) )
+            {
+                Precompile( lua_tostring( L, -1 ), warnL, visited );
+            }
+
+            lua_pop( L, 1 );
+        }
+    }
+
+    lua_pop( L, 1 );
+}
+
+static std::string
+PrototypeKey( ShaderTypes::Category category, const char *name )
+{
+    return std::string( ShaderTypes::StringForCategory( category ) ) + "." + name;
+}
+
+void
+ShaderFactory::DiscardUnusedPrototype( ShaderTypes::Category category, const char *name )
+{
+    if ( 0 == fUnusedPrototypes.erase( PrototypeKey( category, name ) ) )
+    {
+        return;
+    }
+
+    lua_State *L = fL;
+
+    PushTable( L, ShaderTypes::StringForCategory( category ) );
+    lua_pushnil( L );
+    lua_setfield( L, -2, name ); // Lua owns the prototype and will finalize it
+    lua_pop( L, 1 );
+}
+
+void
+ShaderFactory::PrecompilePrototype( ShaderTypes::Category category, const char *name )
+{
+    const std::string key = PrototypeKey( category, name );
+    const bool isUnused = NULL == FindPrototype( category, name, 0 ) || 0 != fUnusedPrototypes.count( key );
+
+    Shader *shader = FindOrLoad( category, name ); // a clone; its prototype stays registered
+
+    if ( ! shader )
+    {
+        return;
+    }
+
+    if ( isUnused )
+    {
+        fUnusedPrototypes.insert( key ); // FindOrLoad marked it as used
+    }
+
+    SharedPtr< ShaderResource > resource( shader->GetData()->GetShaderResource() );
+
+    fOwner.GetRenderer().Precompile( resource->GetProgramMod( ShaderResource::kDefault ), Program::kMaskCount0 );
+
+    Rtt_DELETE( shader );
 }
 
 void ShaderFactory::LoadDependency(LuaMap *nodeGraph, std::string nodeKey, ShaderMap &inputNodes, bool createNode, int localStubsIndex)
@@ -1889,10 +2109,45 @@ ShaderFactory::GetDefaultColorShader() const
     return *fDefaultColorShader;
 }
         
+// An undefined node keeps its old kernel in the graph's stub, so the graph does not use the public effect.
+static bool
+IsKernelInStub( lua_State *L, int localStubsIndex, const char *categoryName, const char *name )
+{
+    if ( ! localStubsIndex )
+    {
+        return false;
+    }
+
+    int top = lua_gettop( L );
+    bool isKernelInStub = false;
+
+    lua_getfield( L, localStubsIndex, categoryName );
+
+    if ( lua_istable( L, -1 ) )
+    {
+        lua_getfield( L, -1, name );
+
+        if ( lua_istable( L, -1 ) )
+        {
+            lua_getfield( L, -1, "kernel" );
+            isKernelInStub = lua_iscfunction( L, -1 );
+        }
+    }
+
+    lua_settop( L, top );
+
+    return isKernelInStub;
+}
+
 ShaderComposite *
 ShaderFactory::FindOrLoadGraph( ShaderTypes::Category category, const char *name, bool shouldFallback, int localStubsIndex )
 {
     ShaderComposite *result = NULL;
+
+    if ( name && ! IsKernelInStub( fL, localStubsIndex, ShaderTypes::StringForCategory( category ), name ) )
+    {
+        fUnusedPrototypes.erase( PrototypeKey( category, name ) ); // used under its public name
+    }
 
 	const ShaderComposite *prototype = (ShaderComposite*)FindPrototype( category, name, localStubsIndex );
 	if ( prototype )
@@ -1949,8 +2204,11 @@ ShaderFactory::PushList( lua_State *L, ShaderTypes::Category category ) const
 //                    (const Shader *)CoronaLuaToUserdata( L, -1 );
 
                 const char *name = lua_tostring( factoryL, -2 );
-                lua_pushstring( L, name );
-                lua_rawseti( L, index, base++ );
+                if ( 0 == fUnusedPrototypes.count( PrototypeKey( category, name ) ) ) // list only what was used
+                {
+                    lua_pushstring( L, name );
+                    lua_rawseti( L, index, base++ );
+                }
             }
 
             // removes 'value'; keeps 'key' for next iteration

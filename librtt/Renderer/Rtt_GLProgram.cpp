@@ -216,18 +216,24 @@ GLProgram::Destroy()
 }
 
 void
-GLProgram::Bind( Program::Version version )
+GLProgram::Precompile( U32 version )
 {
     VersionData& data = fData[version];
     
+    if( !data.fProgram )
+    {
+        Create( static_cast< Program::Version >( version ), data );
+    }
+}
+
+void
+GLProgram::Bind( Program::Version version )
+{
     #if DEFER_CREATION
-        if( !data.fProgram )
-        {
-            Create( version, data );
-        }
+        Precompile( version );
     #endif
     
-    glUseProgram( data.fProgram );
+    glUseProgram( fData[version].fProgram );
     GL_CHECK_ERROR();
 }
 
