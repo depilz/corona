@@ -169,6 +169,13 @@ TextureFactory::Find( const std::string& key )
 void TextureFactory::AddToPreloadQueue(SharedPtr< TextureResource > &resource)
 {
 	fCreateQueue.Append( resource );
+
+	// The queue is only drained while a frame is rendered, and a scene with no changes
+	// is not rendered. Mark it dirty so a preload also happens on a static screen.
+	if ( resource.NotNull() && NULL == resource->GetTexture().GetGPUResource() )
+	{
+		fDisplay.GetScene().Invalidate();
+	}
 }
 	
 void TextureFactory::AddToPreloadQueueByKey(std::string cacheKey)
