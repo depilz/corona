@@ -44,6 +44,7 @@ namespace Rtt
 		virtual void Stop() {};
 		virtual void SetInterval(U32 milliseconds) {};
 		virtual bool IsRunning() const { return true; };
+		virtual bool SupportsFrameRate( U8 fps ) const { return fps <= 120; }
 	};
 
 	class EmscriptenPlatform : public MPlatform
