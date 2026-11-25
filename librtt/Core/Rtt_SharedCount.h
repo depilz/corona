@@ -57,6 +57,7 @@ class SharedCount
 
 	public:
 		bool IsValid() const;
+		int GetStrongCount() const;
 //		bool IsNull() const { return NULL == fCount; }
 //		bool NotNull() const { return ! IsNull(); }
 

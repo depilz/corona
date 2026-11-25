@@ -22,7 +22,8 @@ namespace Rtt
 
 PlatformBitmapTexture::PlatformBitmapTexture( Rtt_Allocator *allocator, PlatformBitmap& bitmap )
 :	Super( allocator ),
-	fBitmap( bitmap )
+	fBitmap( bitmap ),
+	fLoadFailed( false )
 {
 }
 
@@ -140,7 +141,15 @@ PlatformBitmapTexture::GetByteAlignment() const
 const U8*
 PlatformBitmapTexture::GetData() const
 {
-	return (const U8 *)fBitmap.GetBits( GetAllocator() );
+	const U8 *bits = (const U8 *)fBitmap.GetBits( GetAllocator() );
+	fLoadFailed = ( NULL == bits );
+	return bits;
+}
+
+bool
+PlatformBitmapTexture::LoadFailed() const
+{
+	return fLoadFailed;
 }
 
 void

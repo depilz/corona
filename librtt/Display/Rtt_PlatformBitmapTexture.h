@@ -37,6 +37,7 @@ class PlatformBitmapTexture : public Texture
 	public:
 		virtual void Allocate();
 		virtual void Deallocate();
+		virtual bool LoadFailed() const;
 		virtual U32 GetWidth() const;
 		virtual U32 GetHeight() const;
 		virtual Format GetFormat() const;
@@ -54,6 +55,9 @@ class PlatformBitmapTexture : public Texture
 
 	protected:
 		PlatformBitmap& fBitmap;
+
+		// Assigned by every GetData(), never latched: a decode that failed on a worker can succeed on a retry.
+		mutable bool fLoadFailed;
 };
 
 // ----------------------------------------------------------------------------

@@ -60,6 +60,7 @@ class SharedPtr
 	public:
 		bool IsNull() const;
 		bool NotNull() const { return ! IsNull(); }
+		int GetStrongCount() const { return fCount.GetStrongCount(); }
 
 #ifdef Rtt_DEBUG_SHARED_PTR
 		void Log( const char *label ) const;

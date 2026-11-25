@@ -91,6 +91,12 @@ SharedCount::IsValid() const
 	return ( fCount ? fCount->IsValid() : false );
 }
 
+int
+SharedCount::GetStrongCount() const
+{
+	return ( fCount ? fCount->GetStrongCount() : 0 );
+}
+
 void
 SharedCount::Log() const
 {
