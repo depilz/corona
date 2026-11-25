@@ -59,6 +59,12 @@ void AndroidImageDecoder::ResolveFileLocation(const char *filePath)
 		return;
 	}
 
+	// Only the system image decoder reads a JPEG natively. Without it, spare the lookup.
+	if (fIsJpegFile && !AndroidSystemImageDecoder::IsAvailable())
+	{
+		return;
+	}
+
 	if (fNativeToJavaBridge->GetAssetFileLocation(filePath, fPackageEntry))
 	{
 		if (!fPackageEntry.IsCompressed())

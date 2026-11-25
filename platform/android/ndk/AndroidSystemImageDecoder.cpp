@@ -511,6 +511,18 @@ AndroidSystemImageDecoder::~AndroidSystemImageDecoder()
 
 
 // ----------------------------------------------------------------------------
+// Public Static Functions
+// ----------------------------------------------------------------------------
+
+/// Determines if this Android version has the system image decoder.
+/// @return Returns false if every decode would fail, whatever the file.
+bool AndroidSystemImageDecoder::IsAvailable()
+{
+	return GetApi().isValid;
+}
+
+
+// ----------------------------------------------------------------------------
 // Protected Member Functions
 // ----------------------------------------------------------------------------
 

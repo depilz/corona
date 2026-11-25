@@ -35,6 +35,8 @@ class AndroidSystemImageDecoder : public AndroidBaseImageDecoder
 			const AndroidBaseImageDecoder &decoder, const AndroidZipFileEntry *packageEntry, bool acceptsPng);
 		virtual ~AndroidSystemImageDecoder();
 
+		static bool IsAvailable();
+
 	protected:
 		AndroidOperationResult OnDecodeFromFile(const char *filePath);
 
