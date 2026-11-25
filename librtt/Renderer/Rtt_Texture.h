@@ -85,7 +85,11 @@ class Texture : public CPUResource
 		virtual Filter GetFilter() const = 0;
 		virtual Wrap GetWrapX() const;
 		virtual Wrap GetWrapY() const;
+		virtual bool GetMipmaps() const;
 		virtual size_t GetSizeInBytes() const;
+
+		// GetSizeInBytes() is the length of the level 0 buffer, so the GPU memory of all levels is counted apart.
+		virtual size_t GetFootprintInBytes() const;
 		virtual U8 GetByteAlignment() const;
 
 		virtual const U8* GetData() const;

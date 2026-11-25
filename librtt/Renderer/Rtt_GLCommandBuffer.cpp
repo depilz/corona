@@ -28,6 +28,7 @@
 #include "Core/Rtt_Assert.h"
 #include "Core/Rtt_Math.h"
 #include <cstdio>
+#include <stdlib.h>
 #include <string.h>
 #include "Core/Rtt_String.h"
 
@@ -134,6 +135,53 @@ namespace /*anonymous*/
         #define DEBUG_PRINT( ... )
         #define DEBUG_PRINT_MATRIX( message, data, count )
     #endif
+
+#ifdef Rtt_OPENGLES
+    bool IsES3OrLater( const char *version )
+    {
+        const char kPrefix[] = "OpenGL ES ";
+        const size_t kPrefixLength = sizeof( kPrefix ) - 1;
+
+        return version
+            && 0 == strncmp( version, kPrefix, kPrefixLength )
+            && strtol( version + kPrefixLength, NULL, 10 ) >= 3;
+    }
+
+    bool HasExtensionToken( const char *extensions, const char *name )
+    {
+        const size_t length = strlen( name );
+        const char *found = extensions ? strstr( extensions, name ) : NULL;
+
+        while ( found )
+        {
+            const bool isTokenStart = ( found == extensions || ' ' == found[-1] );
+            const bool isTokenEnd = ( '\0' == found[length] || ' ' == found[length] );
+
+            if ( isTokenStart && isTokenEnd )
+            {
+                return true;
+            }
+
+            found = strstr( found + length, name );
+        }
+
+        return false;
+    }
+#endif
+
+    Rtt::CommandBuffer::MipmapSupport DetectMipmapSupport()
+    {
+#if defined( Rtt_OPENGLES )
+        const bool isAnySize = IsES3OrLater( (const char *)glGetString( GL_VERSION ) )
+            || HasExtensionToken( (const char *)glGetString( GL_EXTENSIONS ), "GL_OES_texture_npot" );
+
+        return isAnySize ? Rtt::CommandBuffer::kMipmapsAnySize : Rtt::CommandBuffer::kMipmapsPowerOf2Only;
+#elif defined( __GLEW_H__ )
+        return NULL != glGenerateMipmap ? Rtt::CommandBuffer::kMipmapsAnySize : Rtt::CommandBuffer::kMipmapsNone;
+#else
+        return Rtt::CommandBuffer::kMipmapsAnySize;
+#endif
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -198,6 +246,22 @@ CommandBuffer::GetMaxTextureSize()
         GL_CHECK_ERROR();
     }
     return sMaxSize;
+}
+
+CommandBuffer::MipmapSupport CommandBuffer::sMipmapSupport = CommandBuffer::kMipmapsNone;
+
+bool
+CommandBuffer::SupportsMipmaps( U32 width, U32 height )
+{
+    switch ( sMipmapSupport )
+    {
+        case kMipmapsPowerOf2Only:
+            return IsPowerOf2( width ) && IsPowerOf2( height );
+        case kMipmapsAnySize:
+            return width > 0 && height > 0;
+        default:
+            return false;
+    }
 }
 
 const char *
@@ -404,6 +468,7 @@ GLCommandBuffer::Initialize()
     
     GetMaxTextureSize();
 
+    sMipmapSupport = DetectMipmapSupport();
 }
 void
 GLCommandBuffer::InitializeFBO()

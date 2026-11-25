@@ -2021,6 +2021,12 @@ Display::GetMaxTextureSize()
     return result;
 }
 
+bool
+Display::SupportsMipmaps( U32 width, U32 height )
+{
+    return Renderer::SupportsMipmaps( width, height );
+}
+
 const char *
 Display::GetGlString( const char *s )
 {

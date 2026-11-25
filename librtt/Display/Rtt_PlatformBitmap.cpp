@@ -23,6 +23,7 @@ PlatformBitmap::PlatformBitmap()
 	fMinFilter( RenderTypes::kLinearTextureFilter ),
 	fWrapX( RenderTypes::kClampToEdgeWrap ),
 	fWrapY( RenderTypes::kClampToEdgeWrap ),
+	fMipmaps( false ),
 	fScaleX( Rtt_REAL_0 ),
 	fScaleY( Rtt_REAL_0 )
 {

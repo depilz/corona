@@ -43,6 +43,7 @@ class PlatformBitmapTexture : public Texture
 		virtual Filter GetFilter() const;
 		virtual Wrap GetWrapX() const;
 		virtual Wrap GetWrapY() const;
+		virtual bool GetMipmaps() const;
 		virtual size_t GetSizeInBytes() const;
 		virtual U8 GetByteAlignment() const;
 		virtual const U8* GetData() const;

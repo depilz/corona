@@ -119,6 +119,12 @@ PlatformBitmapTexture::GetWrapY() const
 	return RenderTypes::Convert( fBitmap.GetWrapY() );
 }
 
+bool
+PlatformBitmapTexture::GetMipmaps() const
+{
+	return fBitmap.GetMipmaps();
+}
+
 size_t 
 PlatformBitmapTexture::GetSizeInBytes() const
 {

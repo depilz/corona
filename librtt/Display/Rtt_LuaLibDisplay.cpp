@@ -1929,6 +1929,11 @@ DisplayLibrary::getDefault( lua_State *L )
         RenderTypes::TextureWrap wrap = defaults.GetTextureWrapY();
         lua_pushstring( L, RenderTypes::StringForTextureWrap( wrap ) );
     }
+    else if ( Rtt_StringCompare( key, "mipmaps" ) == 0 )
+    {
+        bool value = defaults.GetMipmaps();
+        lua_pushboolean( L, value ? 1 : 0 );
+    }
 	else if ( Rtt_StringCompare( key, "emitterScaling" ) == 0 )
 	{
 		EmitterObject::Mapping mapping = (EmitterObject::Mapping)defaults.GetEmitterMapping();
@@ -2113,6 +2118,11 @@ DisplayLibrary::setDefault( lua_State *L )
         const char *value = lua_tostring( L, index );
         RenderTypes::TextureWrap wrap = RenderTypes::TextureWrapForString( value );
         defaults.SetTextureWrapY( wrap );
+    }
+    else if ( Rtt_StringCompare( key, "mipmaps" ) == 0 )
+    {
+        bool value = lua_toboolean( L, index ) ? true : false;
+        defaults.SetMipmaps( value );
     }
 	else if ( Rtt_StringCompare( key, "emitterMapping" ) == 0 )
 	{

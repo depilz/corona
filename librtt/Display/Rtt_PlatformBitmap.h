@@ -77,6 +77,14 @@ class PlatformBitmap
 		}
 		PropertyMask;
 
+		// Share the "flags" argument with PropertyMask, but are read on creation and never stored.
+		typedef enum _RequestMask
+		{
+			kRequestMipmaps = 0x10,
+			kRequestNoMipmaps = 0x20
+		}
+		RequestMask;
+
 		static Rtt_INLINE bool IsPropertyReadOnly( PropertyMask mask ) { return kIsPremultiplied == mask; }
 
 	public:
@@ -171,6 +179,9 @@ class PlatformBitmap
 		RenderTypes::TextureFilter GetMinFilter() const { return (RenderTypes::TextureFilter)fMinFilter; }
 		void SetMinFilter( RenderTypes::TextureFilter newValue ) { fMinFilter = newValue; }
 
+		bool GetMipmaps() const { return fMipmaps; }
+		void SetMipmaps( bool newValue ) { fMipmaps = newValue; }
+
 	public:
 		RenderTypes::TextureWrap GetWrapX() const { return (RenderTypes::TextureWrap)fWrapX; }
 		void SetWrapX( RenderTypes::TextureWrap newValue ) { fWrapX = newValue; }
@@ -200,6 +211,7 @@ class PlatformBitmap
 		U8 fMinFilter;
 		U8 fWrapX;
 		U8 fWrapY;
+		bool fMipmaps;
 		Real fScaleX;
 		Real fScaleY;
 
