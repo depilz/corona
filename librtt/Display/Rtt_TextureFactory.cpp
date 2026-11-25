@@ -870,6 +870,9 @@ TextureFactory::EmptyIdleCache()
 void
 TextureFactory::PromotePendingTextures()
 {
+	// Only where Lua and render share an entry: async render (Mac, Win32) renders a static scene once.
+	const bool isPromotionDelayed = ! fDisplay.GetRuntime().IsProperty( Runtime::kRenderAsync );
+
 	PendingTextures::iterator it = fPendingTextures.begin();
 	while ( it != fPendingTextures.end() )
 	{
@@ -878,7 +881,7 @@ TextureFactory::PromotePendingTextures()
 		const bool isNotUploaded = resource.NotNull() && NULL == resource->GetTexture().GetGPUResource();
 
 		// Promoted one sweep after upload: where Lua and render share an entry, an object removed in it holds its texture until the entry ends.
-		const bool isFirstSeenUploaded = resource.NotNull() && ! isNotUploaded && ! pending.wasSeenUploaded;
+		const bool isFirstSeenUploaded = isPromotionDelayed && resource.NotNull() && ! isNotUploaded && ! pending.wasSeenUploaded;
 		if ( isNotUploaded || isFirstSeenUploaded )
 		{
 			pending.wasSeenUploaded = isFirstSeenUploaded;
