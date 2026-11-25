@@ -61,6 +61,8 @@ class AndroidAssetBitmap : public AndroidBitmap
 		virtual U32 UprightWidth() const;
 		virtual U32 UprightHeight() const;
 		virtual const void * GetBits( Rtt_Allocator * context ) const;
+		virtual bool IsLazyUndecoded() const;
+		virtual bool CanDecodeOffThread() const;
 
 	protected:
 		AndroidImageDecoder& ImageDecoder();
@@ -82,6 +84,8 @@ class AndroidMaskAssetBitmap : public AndroidAssetBitmap
 		AndroidMaskAssetBitmap( Rtt_Allocator& context, const char *filePath, NativeToJavaBridge *ntjb );
 
 		virtual Format GetFormat() const;
+		virtual bool IsLazyUndecoded() const;
+		virtual bool CanDecodeOffThread() const;
 };
 
 class AndroidTextBitmap : public AndroidBitmap

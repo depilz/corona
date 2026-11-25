@@ -460,12 +460,13 @@ AppleFileBitmap::GetBitsGrayscale( Rtt_Allocator* context ) const
 		const CGBitmapInfo bitmapInfo = kCGImageAlphaNone;
 		void* data = Rtt_CALLOC( context, bytesPerRow, height );
 		
+		// Given NULL data, CGBitmapContextCreate allocates a buffer we never see
 		const size_t bitsPerChannel = 8;
-		CGContextRef bmpContext = CGBitmapContextCreate(
+		CGContextRef bmpContext = ( ! data ? NULL : CGBitmapContextCreate(
 										data,
 										width, height, bitsPerChannel,
 										bytesPerRow, colorSpace,
-										bitmapInfo );
+										bitmapInfo ) );
 
 		if ( Rtt_VERIFY( bmpContext ) )
 		{
@@ -509,12 +510,13 @@ AppleFileBitmap::GetBitsColor( Rtt_Allocator* context ) const
 				#endif
 		void* data = Rtt_CALLOC( context, bytesPerRow, height );
 		
+		// Given NULL data, CGBitmapContextCreate allocates a buffer we never see
 		const size_t bitsPerChannel = 8;
-		CGContextRef bmpContext = CGBitmapContextCreate(
+		CGContextRef bmpContext = ( ! data ? NULL : CGBitmapContextCreate(
 										data,
 										width, height, bitsPerChannel,
 										bytesPerRow, colorSpace,
-										bitmapInfo );
+										bitmapInfo ) );
 		if ( Rtt_VERIFY( bmpContext ) )
 		{
 			CGRect rect = TransformCGContext( bmpContext, width, height );
@@ -575,7 +577,11 @@ AppleFileBitmap::GetBits( Rtt_Allocator* context ) const
 		}
 		#endif
 
-		fData = ( fIsMask ? GetBitsGrayscale( context ) : GetBitsColor( context ) );
+		// A decode worker has no autorelease pool, and CoreGraphics autoreleases objects while it draws
+		@autoreleasepool
+		{
+			fData = ( fIsMask ? GetBitsGrayscale( context ) : GetBitsColor( context ) );
+		}
 	}
 
 	return fData;
@@ -706,6 +712,20 @@ PlatformBitmap::Orientation
 AppleFileBitmap::GetOrientation() const
 {
 	return (PlatformBitmap::Orientation)fOrientation;
+}
+
+// Masks keep decoding on the render thread
+bool
+AppleFileBitmap::IsLazyUndecoded() const
+{
+	return ! fIsMask && ! fData;
+}
+
+// GetBits() draws with CoreGraphics only, never AppKit/UIKit
+bool
+AppleFileBitmap::CanDecodeOffThread() const
+{
+	return ! fIsMask;
 }
 
 // ----------------------------------------------------------------------------

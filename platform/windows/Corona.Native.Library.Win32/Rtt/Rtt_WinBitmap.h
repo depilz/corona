@@ -102,6 +102,8 @@ class WinFileBitmap : public WinBitmap
 		virtual void SetProperty( PropertyMask mask, bool newValue );
 		virtual U32 UprightWidth() const;
 		virtual U32 UprightHeight() const;
+		virtual bool IsLazyUndecoded() const;
+		virtual bool CanDecodeOffThread() const;
 
 	protected:
 		virtual void Lock( Rtt_Allocator* context );
@@ -140,6 +142,7 @@ class WinFileGrayscaleBitmap : public WinFileBitmap
 
 		virtual void FreeBits() const;
 		virtual PlatformBitmap::Format GetFormat() const;
+		virtual bool CanDecodeOffThread() const;
 
 	protected:
 		virtual U32 SourceWidth() const;

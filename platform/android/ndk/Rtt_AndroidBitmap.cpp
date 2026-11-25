@@ -14,6 +14,7 @@
 #include "NativeToJavaBridge.h"
 #include "Rtt_AndroidBitmap.h"
 #include "Rtt_PlatformFont.h"
+#include "Core/Rtt_WorkerPool.h"
 #include "Display/Rtt_Display.h"
 
 // ----------------------------------------------------------------------------
@@ -98,6 +99,9 @@ AndroidAssetBitmap::AndroidAssetBitmap( Rtt_Allocator &context, const char *file
 	fImageDecoder.SetMaxWidth(Rtt::Display::GetMaxTextureSize());
 	fImageDecoder.SetMaxHeight(Rtt::Display::GetMaxTextureSize());
 
+	// Look up the file once here, so that a decode worker can read it without JNI.
+	fImageDecoder.ResolveFileLocation(filePath);
+
 	// Fetch the image's information such as pixel width, height, and orientation.
 	// The decoder will write this information to the targeted "fImageData" member variable.
 	fImageDecoder.SetToDecodeImageInfoOnly();
@@ -117,10 +121,33 @@ AndroidAssetBitmap::GetBits( Rtt_Allocator *context ) const
 	const void *bits = Super::GetBits(context);
 	if (!bits)
 	{
-		fImageDecoder.DecodeFromFile(fPath.GetString());
+		// A decode job must not raise Lua errors, on whichever thread it runs, and has no Java fallback.
+		// It runs the native PNG decoder, or Java for a JPEG; when it fails, the bitmap stays undecoded
+		// and the next GetBits() outside a job runs the whole path. The GL thread can change while the
+		// runtime lives, so do not compare with the thread that built the bitmap.
+		if (!WorkerPool::IsRunningJob())
+		{
+			fImageDecoder.DecodeFromFile(fPath.GetString());
+		}
+		else if (fImageDecoder.DecodeOffThreadFromFile(fPath.GetString()).HasFailed())
+		{
+			fImageData.DestroyImageByteBuffer();
+		}
 		bits = Super::GetBits(context);
 	}
 	return bits;
+}
+
+bool
+AndroidAssetBitmap::IsLazyUndecoded() const
+{
+	return ( NULL == fImageData.GetImageByteBuffer() );
+}
+
+bool
+AndroidAssetBitmap::CanDecodeOffThread() const
+{
+	return fImageDecoder.CanDecodeOffThread();
 }
 
 AndroidImageDecoder&
@@ -206,6 +233,18 @@ PlatformBitmap::Format
 AndroidMaskAssetBitmap::GetFormat() const
 {
 	return PlatformBitmap::kMask;
+}
+
+bool
+AndroidMaskAssetBitmap::IsLazyUndecoded() const
+{
+	return false;
+}
+
+bool
+AndroidMaskAssetBitmap::CanDecodeOffThread() const
+{
+	return false;
 }
 
 // ----------------------------------------------------------------------------

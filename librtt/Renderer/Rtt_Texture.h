@@ -91,6 +91,17 @@ class Texture : public CPUResource
 		virtual const U8* GetData() const;
 		virtual void ReleaseData();
 
+		// Off-thread decode hook. Both queries default to false.
+		// IsLazyUndecoded(): GetData() would decode pixels that are not decoded yet.
+		// CanDecodeOffThread(): Prefetch() may run on a worker thread; implies IsLazyUndecoded().
+		// Prefetch(): decodes and caches the pixels the later GetData() returns.
+		virtual bool IsLazyUndecoded() const { return false; }
+		virtual bool CanDecodeOffThread() const { return false; }
+		virtual void Prefetch() const {}
+
+		// Decoded size in bytes (4 bytes per pixel), known before decoding
+		size_t GetDecodedCost() const { return (size_t)GetWidth() * GetHeight() * 4; }
+
 		virtual void SetFilter( Filter newValue );
 		virtual void SetWrapX( Wrap newValue );
 		virtual void SetWrapY( Wrap newValue );

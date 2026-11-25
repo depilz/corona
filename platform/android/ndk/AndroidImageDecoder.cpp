@@ -8,12 +8,14 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+#include <unistd.h>
 #include "AndroidImageDecoder.h"
 #include "AndroidJavaImageDecoder.h"
 #include "AndroidNativePngDecoder.h"
 #include "AndroidOperationResult.h"
 #include "Core/Rtt_Build.h"
 #include "Core/Rtt_String.h"
+#include "NativeToJavaBridge.h"
 
 
 // ----------------------------------------------------------------------------
@@ -23,13 +25,106 @@
 /// Creates a new image decoder.
 /// @param allocatorPointer Allocator this decoder needs to creates its objects. Cannot be NULL.
 AndroidImageDecoder::AndroidImageDecoder(Rtt_Allocator *allocatorPointer, NativeToJavaBridge * ntjb)
-:	AndroidBaseImageDecoder(allocatorPointer), fNativeToJavaBridge(ntjb)
+:	AndroidBaseImageDecoder(allocatorPointer),
+	fNativeToJavaBridge(ntjb),
+	fFileLocation(kUnresolved),
+	fIsJpegFile(false),
+	fPackageEntry(allocatorPointer)
 {
 }
 
 /// Destroys this decoder and its resources.
 AndroidImageDecoder::~AndroidImageDecoder()
 {
+}
+
+
+// ----------------------------------------------------------------------------
+// Public Member Functions
+// ----------------------------------------------------------------------------
+
+/// Looks up where the given PNG file lives, via JNI, so that later decodes of it can skip that lookup.
+/// <br>
+/// Binds this decoder to the given file: every later decode is expected to be given the same path.
+/// The location is kept only if the native PNG decoder can read the file as is, which is
+/// a plain file or an uncompressed entry within the APK or expansion file.
+/// A JPEG file is noted instead, since only Java decodes it.
+/// Must be called on a thread attached to the Java VM.
+/// @param filePath The name and path of the image file. Cannot be NULL or empty.
+void AndroidImageDecoder::ResolveFileLocation(const char *filePath)
+{
+	fIsJpegFile = Rtt_StringEndsWithNoCase(filePath, ".jpg") || Rtt_StringEndsWithNoCase(filePath, ".jpeg");
+	if (!Rtt_StringEndsWithNoCase(filePath, ".png"))
+	{
+		return;
+	}
+
+	if (fNativeToJavaBridge->GetAssetFileLocation(filePath, fPackageEntry))
+	{
+		if (!fPackageEntry.IsCompressed())
+		{
+			fFileLocation = kPackageEntry;
+		}
+	}
+	else if (access(filePath, R_OK) == 0)
+	{
+		fFileLocation = kPlainFile;
+	}
+}
+
+/// Determines if DecodeNativelyFromFile() can decode the file given to ResolveFileLocation().
+/// @return Returns true if the file is a PNG whose location was resolved to a plain file or
+///         an uncompressed package entry.
+bool AndroidImageDecoder::CanDecodeNatively() const
+{
+	return (fFileLocation != kUnresolved);
+}
+
+/// Decodes the file given to ResolveFileLocation() with the native PNG decoder only.
+/// <br>
+/// Makes no JNI calls and has no Java fallback, so it may run on a thread that is not attached to the Java VM.
+/// @param filePath The name and path of the image file given to ResolveFileLocation().
+/// @return Returns the result of the image decoding operation, as described by OnDecodeFromFile().
+///         Fails if CanDecodeNatively() returns false.
+AndroidOperationResult AndroidImageDecoder::DecodeNativelyFromFile(const char *filePath)
+{
+	if (!CanDecodeNatively())
+	{
+		return AndroidOperationResult::FailedWith(GetAllocator(), "Image file location was not resolved.");
+	}
+
+	AndroidNativePngDecoder pngDecoder(*this, fNativeToJavaBridge);
+	return pngDecoder.DecodeFromResolvedFile(filePath, (kPackageEntry == fFileLocation) ? &fPackageEntry : NULL);
+}
+
+/// Determines if DecodeOffThreadFromFile() can decode the file given to ResolveFileLocation().
+/// @return Returns true if CanDecodeNatively() returns true or if the file is a JPEG.
+bool AndroidImageDecoder::CanDecodeOffThread() const
+{
+	return CanDecodeNatively() || fIsJpegFile;
+}
+
+/// Decodes the file given to ResolveFileLocation() on a thread that does not run Lua.
+/// <br>
+/// A PNG is decoded as by DecodeNativelyFromFile(). A JPEG is decoded by Java on the calling thread,
+/// which gets attached to the Java VM until it exits; a Java exception fails the decode
+/// instead of raising a Lua error.
+/// @param filePath The name and path of the image file given to ResolveFileLocation().
+/// @return Returns the result of the image decoding operation, as described by OnDecodeFromFile().
+///         Fails if CanDecodeOffThread() returns false.
+AndroidOperationResult AndroidImageDecoder::DecodeOffThreadFromFile(const char *filePath)
+{
+	if (CanDecodeNatively())
+	{
+		return DecodeNativelyFromFile(filePath);
+	}
+	if (!fIsJpegFile || !NativeToJavaBridge::AttachCurrentThread())
+	{
+		return AndroidOperationResult::FailedWith(GetAllocator(), "Image file cannot be decoded off the Lua thread.");
+	}
+
+	AndroidJavaImageDecoder javaImageDecoder(*this, fNativeToJavaBridge, false);
+	return javaImageDecoder.DecodeFromFile(filePath);
 }
 
 
@@ -54,7 +149,11 @@ AndroidOperationResult AndroidImageDecoder::OnDecodeFromFile(const char *filePat
 	AndroidOperationResult result;
 
 	// First, attempt to load the image file natively on the C/C++ side.
-	if (Rtt_StringEndsWithNoCase(filePath, ".png"))
+	if (CanDecodeNatively())
+	{
+		result = DecodeNativelyFromFile(filePath);
+	}
+	else if (Rtt_StringEndsWithNoCase(filePath, ".png"))
 	{
 		AndroidNativePngDecoder pngDecoder(*this, fNativeToJavaBridge);
 		result = pngDecoder.DecodeFromFile(filePath);

@@ -17,6 +17,7 @@
 // Forward declarations.
 struct Rtt_Allocator;
 class AndroidBinaryReader;
+class AndroidZipFileEntry;
 class NativeToJavaBridge;
 
 /// Abstract class from which all native C/C++ image decoders must derive from.
@@ -30,6 +31,7 @@ class AndroidBaseNativeImageDecoder : public AndroidBaseImageDecoder
 		virtual ~AndroidBaseNativeImageDecoder();
 
 		AndroidOperationResult DecodeFrom(AndroidBinaryReader &reader);
+		AndroidOperationResult DecodeFromResolvedFile(const char *filePath, const AndroidZipFileEntry *packageEntry);
 
 	protected:
 		AndroidOperationResult OnDecodeFromFile(const char *filePath);

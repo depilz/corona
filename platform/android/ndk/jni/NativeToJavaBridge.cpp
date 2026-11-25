@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <pthread.h>
 
 #include "Rtt_AndroidPlatform.h"
 #include "Rtt_Lua.h"
@@ -37,6 +38,9 @@
 
 static const char kNativeToJavaBridge[] = "com/ansca/corona/NativeToJavaBridge";
 JavaVM *NativeToJavaBridge::fVM;
+jclass NativeToJavaBridge::fBridgeClass;
+static pthread_key_t sDetachThreadKey;
+static pthread_once_t sDetachThreadKeyOnce = PTHREAD_ONCE_INIT;
 // Signatures available through:
 //		 javap -classpath bin -protected com.ansca.corona.CoronaBridge -s
 
@@ -65,6 +69,15 @@ NativeToJavaBridge::InitInstance( JNIEnv *env, Rtt::Runtime *runtime, jobject co
 	jint result = env->GetJavaVM(&vm);
 	if ( 0 == result )
 	{
+		// Cache the bridge class for threads attached natively, where FindClass() cannot see the app's classes.
+		if ( ! fBridgeClass )
+		{
+			jclassInstance bridge( env, kNativeToJavaBridge );
+			if ( bridge.isValid() )
+			{
+				fBridgeClass = (jclass)env->NewGlobalRef( bridge.getClass() );
+			}
+		}
 		return new NativeToJavaBridge( vm, runtime, coronaRuntime );
 	}
 	return NULL;
@@ -92,6 +105,39 @@ NativeToJavaBridge::GetJNIEnv()
 		debugPrint( "> NativeToJavaBridge::GetJNIEnv null");
 	}
 	return env;
+}
+
+static void
+DetachThreadFromJavaVM( void *vm )
+{
+	((JavaVM*)vm)->DetachCurrentThread();
+}
+
+static void
+CreateDetachThreadKey()
+{
+	pthread_key_create( &sDetachThreadKey, DetachThreadFromJavaVM );
+}
+
+/// Attaches the calling thread to the Java VM if it is not attached yet.
+/// A thread attached here is detached automatically when it exits.
+/// @return Returns true if the calling thread can make JNI calls.
+bool
+NativeToJavaBridge::AttachCurrentThread()
+{
+	if (GetJNIEnv())
+	{
+		return true;
+	}
+
+	JNIEnv *env = NULL;
+	if (fVM->AttachCurrentThread(&env, NULL) != JNI_OK)
+	{
+		return false;
+	}
+	pthread_once( &sDetachThreadKeyOnce, CreateDetachThreadKey );
+	pthread_setspecific( sDetachThreadKey, fVM );
+	return true;
 }
 
 Rtt::Runtime *
@@ -691,16 +737,16 @@ NativeToJavaBridge::GetAssetFileLocation(const char *assetName, AndroidZipFileEn
 	NativeTrace trace( "NativeToJavaBridge::GetAssetFileLocation");
 
 	bool wasAssetFound = false;
-	jclassInstance bridge( GetJNIEnv(), kNativeToJavaBridge );
-	if (bridge.isValid())
+	JNIEnv *env = GetJNIEnv();
+	if (env && fBridgeClass)
 	{
-		jmethodID mid = bridge.getEnv()->GetStaticMethodID(bridge.getClass(), 
+		jmethodID mid = env->GetStaticMethodID(fBridgeClass,
 				"callGetAssetFileLocation", "(Ljava/lang/String;J)Z");
 		if (mid)
 		{
-			jstringParam assetNameJ(bridge.getEnv(), assetName);
-			jboolean result = bridge.getEnv()->CallStaticBooleanMethod(
-						bridge.getClass(), mid, assetNameJ.getValue(), (jlong)(uintptr_t)(&zipFileEntry));
+			jstringParam assetNameJ(env, assetName);
+			jboolean result = env->CallStaticBooleanMethod(
+						fBridgeClass, mid, assetNameJ.getValue(), (jlong)(uintptr_t)(&zipFileEntry));
 			// HandleJavaException();
 			wasAssetFound = result ? true : false;
 		}
@@ -982,29 +1028,37 @@ NativeToJavaBridge::GetSafeAreaInsetsPixels(Rtt::Real &top, Rtt::Real &left, Rtt
 bool
 NativeToJavaBridge::LoadImage(
 	const char *filePath, AndroidImageData &imageData, bool convertToGrayscale,
-	int maxWidth, int maxHeight, bool loadImageInfoOnly)
+	int maxWidth, int maxHeight, bool loadImageInfoOnly, bool canRaiseLuaError)
 {
 	NativeTrace trace( "NativeToJavaBridge::LoadImage" );
 
 	bool wasLoaded = false;
-	jclassInstance bridge(GetJNIEnv(), kNativeToJavaBridge);
-	if (bridge.isValid())
+	JNIEnv *env = GetJNIEnv();
+	if (env && fBridgeClass)
 	{
-		jmethodID methodId = bridge.getEnv()->GetStaticMethodID(
-								bridge.getClass(), "callLoadBitmap", "(Lcom/ansca/corona/CoronaRuntime;Ljava/lang/String;JZIIZ)Z");
+		jmethodID methodId = env->GetStaticMethodID(
+								fBridgeClass, "callLoadBitmap", "(Lcom/ansca/corona/CoronaRuntime;Ljava/lang/String;JZIIZ)Z");
 		if (methodId)
 		{
-			jstringParam filePathJ(bridge.getEnv(), filePath);
+			jstringParam filePathJ(env, filePath);
 			if (filePathJ.isValid())
 			{
 				jboolean javaBooleanResult;
-				javaBooleanResult = bridge.getEnv()->CallStaticBooleanMethod(
-											bridge.getClass(), methodId, fCoronaRuntime, filePathJ.getValue(),
+				javaBooleanResult = env->CallStaticBooleanMethod(
+											fBridgeClass, methodId, fCoronaRuntime, filePathJ.getValue(),
 											(jlong)(uintptr_t)(&imageData),
 											convertToGrayscale ? JNI_TRUE : JNI_FALSE,
 											maxWidth, maxHeight,
 											loadImageInfoOnly ? JNI_TRUE : JNI_FALSE);
-				HandleJavaException();
+				if (canRaiseLuaError)
+				{
+					HandleJavaException();
+				}
+				else
+				{
+					// Off the Lua thread, so the exception is dropped and the load reported as failed.
+					env->ExceptionClear();
+				}
 				wasLoaded = javaBooleanResult ? true : false;
 			}
 		}

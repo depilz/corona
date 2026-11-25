@@ -98,10 +98,23 @@ AndroidOperationResult AndroidBaseNativeImageDecoder::OnDecodeFromFile(const cha
 	// If so, then the below function will find its package file and byte offset within the file.
 	AndroidZipFileEntry zipFileEntry(GetAllocator());
 	bool isAssetFile = fNativeToJavaBridge->GetAssetFileLocation(filePath, zipFileEntry);
+	return DecodeFromResolvedFile(filePath, isAssetFile ? &zipFileEntry : NULL);
+}
 
+/// Decodes the given image file from a location already resolved by NativeToJavaBridge::GetAssetFileLocation().
+/// <br>
+/// Makes no JNI calls, so it may run on a thread that is not attached to the Java VM.
+/// @param filePath The name and path of the image file to decode. Cannot be NULL or empty.
+/// @param packageEntry The file's entry within the APK or expansion file.
+///                     <br>
+///                     Set to NULL if the file is a plain file to be opened by its path.
+/// @return Returns the result of the image decoding operation, as described by OnDecodeFromFile().
+AndroidOperationResult AndroidBaseNativeImageDecoder::DecodeFromResolvedFile(
+	const char *filePath, const AndroidZipFileEntry *packageEntry)
+{
 	// Do not continue if the given file is a compressed asset.
 //TODO: Add support for decompressing assets.
-	if (isAssetFile && zipFileEntry.IsCompressed())
+	if (packageEntry && packageEntry->IsCompressed())
 	{
 		char message[512];
 		snprintf(message, sizeof(message), "Unable to read image file \"%s\" because it is compressed.", filePath);
@@ -110,12 +123,12 @@ AndroidOperationResult AndroidBaseNativeImageDecoder::OnDecodeFromFile(const cha
 
 	// Open the given file.
 	FILE *filePointer = NULL;
-	if (isAssetFile)
+	if (packageEntry)
 	{
-		filePointer = fopen(zipFileEntry.GetPackageFilePath(), "rb");
+		filePointer = fopen(packageEntry->GetPackageFilePath(), "rb");
 		if (filePointer)
 		{
-			int seekResult = fseek(filePointer, zipFileEntry.GetByteOffsetInPackage(), SEEK_SET);
+			int seekResult = fseek(filePointer, packageEntry->GetByteOffsetInPackage(), SEEK_SET);
 			if (seekResult)
 			{
 				fclose(filePointer);
