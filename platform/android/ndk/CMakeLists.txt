@@ -247,6 +247,7 @@ add_library( corona SHARED
 		AndroidBaseNativeImageDecoder.cpp
 		AndroidImageData.cpp
 		AndroidImageDecoder.cpp
+		AndroidImageSniffer.cpp
 		AndroidJavaImageDecoder.cpp
 		AndroidKeyServices.cpp
 		AndroidNativePngDecoder.cpp
