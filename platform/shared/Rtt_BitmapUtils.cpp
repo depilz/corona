@@ -273,6 +273,9 @@ namespace bitmapUtil
 
 		png_init_io(png, fp);
 		png_read_info(png, info);
+#if defined( Rtt_EMSCRIPTEN_ENV )
+		png_set_crc_action(png, PNG_CRC_QUIET_USE, PNG_CRC_NO_CHANGE); // Ignore IDAT checksums; header chunks were already checked.
+#endif
 
 		w = png_get_image_width(png, info);
 		h = png_get_image_height(png, info);
