@@ -220,11 +220,15 @@ class ScopedDecoder
 		SystemDecoder *fDecoder;
 };
 
-/// Byte source over an open file, read with pread() so a file changed while it is read cannot crash.
+/// Byte source over a byte range of an open file, read with pread() so a file changed while it is read cannot crash.
+/// Reads ahead into a small window, since an image's structure is read in many small pieces.
 class FileSource : public Sniffer::ByteSource
 {
 	public:
-		FileSource(int descriptor, size_t length) : fDescriptor(descriptor), fLength(length) {}
+		FileSource(int descriptor, off_t start, size_t length)
+		:	fDescriptor(descriptor), fStart(start), fLength(length), fWindowOffset(0), fWindowLength(0)
+		{
+		}
 
 		virtual size_t GetLength() const
 		{
@@ -237,9 +241,31 @@ class FileSource : public Sniffer::ByteSource
 			{
 				return false;
 			}
+			if (count > sizeof(fWindow))
+			{
+				return ReadFile(offset, buffer, count);
+			}
+			if ((offset < fWindowOffset) || (offset + count > fWindowOffset + fWindowLength))
+			{
+				size_t length = (fLength - offset < sizeof(fWindow)) ? (fLength - offset) : sizeof(fWindow);
+				fWindowLength = 0;
+				if (!ReadFile(offset, fWindow, length))
+				{
+					return false;
+				}
+				fWindowOffset = offset;
+				fWindowLength = length;
+			}
+			memcpy(buffer, fWindow + (offset - fWindowOffset), count);
+			return true;
+		}
+
+	private:
+		bool ReadFile(size_t offset, void *buffer, size_t count) const
+		{
 			for (size_t done = 0; done < count;)
 			{
-				ssize_t readCount = pread(fDescriptor, (char *)buffer + done, count - done, (off_t)(offset + done));
+				ssize_t readCount = pread(fDescriptor, (char *)buffer + done, count - done, fStart + (off_t)(offset + done));
 				if (readCount > 0)
 				{
 					done += (size_t)readCount;
@@ -252,9 +278,12 @@ class FileSource : public Sniffer::ByteSource
 			return true;
 		}
 
-	private:
 		int fDescriptor;
+		off_t fStart;
 		size_t fLength;
+		mutable size_t fWindowOffset;
+		mutable size_t fWindowLength;
+		mutable unsigned char fWindow[1024];
 };
 
 /// Multiplies each RGBA pixel's colour by its alpha the way the engine's libpng decoder does, (c * a) >> 8.
@@ -267,6 +296,21 @@ void PremultiplyByAlpha(unsigned char *pixels, size_t pixelCount)
 		pixel[1] = (unsigned char)((pixel[1] * alpha) >> 8);
 		pixel[2] = (unsigned char)((pixel[2] * alpha) >> 8);
 	}
+}
+
+/// Checks the image's size against the decode settings: never downscaled, and small enough for the engine's pixel buffer.
+bool IsSizeAccepted(int32_t width, int32_t height, const AndroidBaseImageDecoder &settings)
+{
+	if ((width <= 0) || (height <= 0))
+	{
+		return false;
+	}
+	if (((settings.GetMaxWidth() > 0) && ((U32)width > settings.GetMaxWidth())) ||
+	    ((settings.GetMaxHeight() > 0) && ((U32)height > settings.GetMaxHeight())))
+	{
+		return false;
+	}
+	return ((uint64_t)width * (uint64_t)height * kBytesPerPixel <= UINT32_MAX);
 }
 
 /// Checks the system decoder's header against what the sniffer read and against the decode settings.
@@ -285,19 +329,27 @@ bool IsHeaderAccepted(
 		return false;
 	}
 
-	// The size must be the sniffed one, never downscaled, and small enough for the engine's pixel buffer.
+	// The size must be the sniffed one, which the header pass gave the target.
 	int32_t width = api.getWidth(&info);
 	int32_t height = api.getHeight(&info);
-	if ((width <= 0) || (height <= 0) || (width != sniffed.width) || (height != sniffed.height))
+	return (width == sniffed.width) && (height == sniffed.height) && IsSizeAccepted(width, height, settings);
+}
+
+/// Fills the settings' target with the image's information as the sniffer read it from the file:
+/// its full size, a scale of 1, upright orientation and RGBA format.
+bool ReadInfo(const Sniffer::Result &sniffed, const AndroidBaseImageDecoder &settings)
+{
+	if (!IsSizeAccepted(sniffed.width, sniffed.height, settings))
 	{
 		return false;
 	}
-	if (((settings.GetMaxWidth() > 0) && ((U32)width > settings.GetMaxWidth())) ||
-	    ((settings.GetMaxHeight() > 0) && ((U32)height > settings.GetMaxHeight())))
-	{
-		return false;
-	}
-	return ((uint64_t)width * (uint64_t)height * kBytesPerPixel <= UINT32_MAX);
+	AndroidImageData &target = *settings.GetTarget();
+	target.SetWidth((U32)sniffed.width);
+	target.SetHeight((U32)sniffed.height);
+	target.SetScale(Rtt_REAL_1);
+	target.SetOrientation(Rtt::PlatformBitmap::kUp);
+	target.SetPixelFormatToRGBA();
+	return true;
 }
 
 /// Decodes the pixels into a new buffer of the target, which must already have the decoder's size.
@@ -326,8 +378,8 @@ bool DecodePixels(
 	return true;
 }
 
-/// Reads the image's information, or decodes its pixels, into the settings' target.
-/// A full decode is taken only if the target already has the size the header pass gave it.
+/// Decodes the image's pixels into the settings' target.
+/// Taken only if the target already has the size the header pass gave it.
 bool DecodeWith(
 	const SystemDecoderApi &api, SystemDecoder *decoder, const Sniffer::Result &sniffed,
 	const AndroidBaseImageDecoder &settings)
@@ -339,15 +391,6 @@ bool DecodeWith(
 	}
 
 	AndroidImageData &target = *settings.GetTarget();
-	if (settings.IsDecodingImageInfoOnly())
-	{
-		target.SetWidth((U32)sniffed.width);
-		target.SetHeight((U32)sniffed.height);
-		target.SetScale(Rtt_REAL_1);
-		target.SetOrientation(Rtt::PlatformBitmap::kUp);
-		target.SetPixelFormatToRGBA();
-		return true;
-	}
 	if ((target.GetWidth() != (U32)sniffed.width) || (target.GetHeight() != (U32)sniffed.height) ||
 	    !target.IsPixelFormatRGBA())
 	{
@@ -366,10 +409,14 @@ bool DecodePlainFile(const SystemDecoderApi &api, const char *filePath, const An
 	{
 		return false;
 	}
-	Sniffer::Result sniffed = Sniffer::Sniff(FileSource(file.GetDescriptor(), (size_t)fileSize), api.apiLevel);
+	Sniffer::Result sniffed = Sniffer::Sniff(FileSource(file.GetDescriptor(), 0, (size_t)fileSize), api.apiLevel);
 	if (!sniffed.IsEligible())
 	{
 		return false;
+	}
+	if (settings.IsDecodingImageInfoOnly())
+	{
+		return ReadInfo(sniffed, settings);
 	}
 
 	// The system decoder reads from the descriptor's offset, which pread() left at the start of the file.
@@ -381,7 +428,8 @@ bool DecodePlainFile(const SystemDecoderApi &api, const char *filePath, const An
 	return DecodeWith(api, decoder.Get(), sniffed, settings);
 }
 
-/// Decodes an uncompressed entry of the APK or expansion file, from a memory mapping of its bytes.
+/// Decodes an uncompressed entry of the APK or expansion file: its information is read with pread(),
+/// its pixels from a memory mapping of its bytes.
 bool DecodePackageEntry(
 	const SystemDecoderApi &api, const AndroidZipFileEntry &entry, const AndroidBaseImageDecoder &settings)
 {
@@ -398,6 +446,11 @@ bool DecodePackageEntry(
 	if (!file.GetSize(fileSize) || ((off_t)length > fileSize - (off_t)offset))
 	{
 		return false;
+	}
+	if (settings.IsDecodingImageInfoOnly())
+	{
+		Sniffer::Result sniffed = Sniffer::Sniff(FileSource(file.GetDescriptor(), (off_t)offset, (size_t)length), api.apiLevel);
+		return sniffed.IsEligible() && ReadInfo(sniffed, settings);
 	}
 	ScopedMapping mapping(file.GetDescriptor(), (off_t)offset, (size_t)length);
 	if (!mapping.GetBytes())
