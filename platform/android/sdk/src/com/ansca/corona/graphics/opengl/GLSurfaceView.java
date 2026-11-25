@@ -476,6 +476,11 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
         mEGLContextClientVersion = version;
     }
 
+    void setPrefersGLES3(boolean prefersGLES3) {
+        checkRenderThreadState();
+        mPrefersGLES3 = prefersGLES3;
+    }
+
     /**
      * Set the rendering mode. When renderMode is
      * RENDERMODE_CONTINUOUSLY, the renderer is called
@@ -776,9 +781,9 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
         void destroyContext(EGL10 egl, EGLDisplay display, EGLContext context);
     }
 
-    private class DefaultContextFactory implements EGLContextFactory {
-        private int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
+    private static final int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
 
+    private class DefaultContextFactory implements EGLContextFactory {
         public EGLContext createContext(EGL10 egl, EGLDisplay display, EGLConfig config) {
             int[] attrib_list = {EGL_CONTEXT_CLIENT_VERSION, mEGLContextClientVersion,
                     EGL10.EGL_NONE };
@@ -862,12 +867,13 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
     private abstract class BaseConfigChooser
             implements EGLConfigChooser {
         public BaseConfigChooser(int[] configSpec) {
-            mConfigSpec = filterConfigSpec(configSpec);
+            mConfigSpec = configSpec;
         }
 
         public EGLConfig chooseConfig(EGL10 egl, EGLDisplay display) {
             int[] num_config = new int[1];
-            if (!egl.eglChooseConfig(display, mConfigSpec, null, 0,
+            int[] configSpec = filterConfigSpec(mConfigSpec);
+            if (!egl.eglChooseConfig(display, configSpec, null, 0,
                     num_config)) {
                 throw new IllegalArgumentException("eglChooseConfig failed");
             }
@@ -880,7 +886,7 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
             }
 
             EGLConfig[] configs = new EGLConfig[numConfigs];
-            if (!egl.eglChooseConfig(display, mConfigSpec, configs, numConfigs,
+            if (!egl.eglChooseConfig(display, configSpec, configs, numConfigs,
                     num_config)) {
                 throw new IllegalArgumentException("eglChooseConfig#2 failed");
             }
@@ -897,7 +903,7 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
         protected int[] mConfigSpec;
 
         private int[] filterConfigSpec(int[] configSpec) {
-            if (mEGLContextClientVersion != 2) {
+            if (mEGLContextClientVersion != 2 && mEGLContextClientVersion != 3) {
                 return configSpec;
             }
             /* We know none of the subclasses define EGL_RENDERABLE_TYPE.
@@ -908,6 +914,9 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
             System.arraycopy(configSpec, 0, newConfigSpec, 0, len-1);
             newConfigSpec[len-1] = EGL10.EGL_RENDERABLE_TYPE;
             newConfigSpec[len] = 4; /* EGL_OPENGL_ES2_BIT */
+            if (mEGLContextClientVersion == 3) {
+                newConfigSpec[len] |= 0x40; /* EGL_OPENGL_ES3_BIT_KHR */
+            }
             newConfigSpec[len+1] = EGL10.EGL_NONE;
             return newConfigSpec;
         }
@@ -1068,24 +1077,54 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
             if (view == null) {
                 mEglConfig = null;
                 mEglContext = null;
-            } else {
-                mEglConfig = view.mEGLConfigChooser.chooseConfig(mEgl, mEglDisplay);
-
-                /*
-                * Create an EGL context. We want to do this as rarely as we can, because an
-                * EGL context is a somewhat heavy object.
-                */
-                mEglContext = view.mEGLContextFactory.createContext(mEgl, mEglDisplay, mEglConfig);
+            } else if (!view.mPrefersGLES3 || !createGLES3Context(view)) {
+                createContext(view);
             }
             if (mEglContext == null || mEglContext == EGL10.EGL_NO_CONTEXT) {
                 mEglContext = null;
                 throwEglException("createContext");
+            }
+            if (view.mPrefersGLES3) {
+                logContextVersion();
             }
             if (LOG_EGL) {
                 Log.w("EglHelper", "createContext " + mEglContext + " tid=" + Thread.currentThread().getId());
             }
 
             mEglSurface = null;
+        }
+
+        private void createContext(GLSurfaceView view) {
+            mEglConfig = view.mEGLConfigChooser.chooseConfig(mEgl, mEglDisplay);
+
+            /*
+            * Create an EGL context. We want to do this as rarely as we can, because an
+            * EGL context is a somewhat heavy object.
+            */
+            mEglContext = view.mEGLContextFactory.createContext(mEgl, mEglDisplay, mEglConfig);
+        }
+
+        private boolean createGLES3Context(GLSurfaceView view) {
+            if (sHasGLES3Failed) {
+                return false;
+            }
+            int fallbackVersion = view.mEGLContextClientVersion;
+            view.mEGLContextClientVersion = 3;
+            try {
+                createContext(view);
+            } catch (RuntimeException e) {
+                mEglContext = null;
+            } finally {
+                view.mEGLContextClientVersion = fallbackVersion;
+            }
+            sHasGLES3Failed = (mEglContext == null || mEglContext == EGL10.EGL_NO_CONTEXT);
+            return !sHasGLES3Failed;
+        }
+
+        private void logContextVersion() {
+            int[] version = new int[1];
+            mEgl.eglQueryContext(mEglDisplay, mEglContext, EGL_CONTEXT_CLIENT_VERSION, version);
+            Log.i("Corona", "OpenGL ES " + version[0] + " context created");
         }
 
         /**
@@ -2026,6 +2065,7 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
     }
 
     private static final GLThreadManager sGLThreadManager = new GLThreadManager();
+    private static volatile boolean sHasGLES3Failed;
     private final WeakReference<GLSurfaceView> mThisWeakRef = new WeakReference<GLSurfaceView>(this);
     protected GLThread mGLThread;
     private Renderer mRenderer;
@@ -2036,6 +2076,7 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
     private GLWrapper mGLWrapper;
     private int mDebugFlags;
     private int mEGLContextClientVersion;
+    private boolean mPrefersGLES3;
     private boolean mPreserveEGLContextOnPause;
     private boolean mNeedsSwap = true;
     

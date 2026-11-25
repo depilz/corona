@@ -79,6 +79,7 @@ settings =
 		},
 		CoronaWindowMovesWhenKeyboardAppears = false,  -- Both camel case and pascal case are accepted.
 		coronaWindowMovesWhenKeyboardAppears = false,
+		useGLES3 = true,
 		initialSystemUiVisibility = "",
 		edgeToEdge = false,
 		facebookAppId = "",  -- Both camel case and pascal case are accepted.
@@ -173,6 +174,7 @@ settings =
 			CoronaUseIOS6IPadPhotoPickerLandscapeOnlyWorkaround = true,
 			UIBackgroundModes = {'remote-notification'},
 			CoronaWindowMovesWhenKeyboardAppears = false,
+			CoronaUseGLES3 = true,
 			CFBundleLocalizations = {
 				"en",
 			},
@@ -313,6 +315,7 @@ settings =
 		launchImage = "",
 
 		plist = {
+			CoronaUseGLES3 = true,
 			UIApplicationExitsOnSuspend = true,
 			NSVideoSubscriberAccountUsageDescription = "",
 			ITSAppUsesNonExemptEncryption = false,

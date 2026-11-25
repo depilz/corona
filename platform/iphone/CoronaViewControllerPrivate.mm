@@ -24,6 +24,53 @@
 
 // ----------------------------------------------------------------------------
 
+static BOOL
+IsGLES3Enabled()
+{
+	id value = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CoronaUseGLES3"];
+	return value == (id)kCFBooleanTrue || [value isEqual:@"true"];
+}
+
+static Rtt_EAGLContext *
+CreateGLES3Context()
+{
+	static BOOL sHasFailed = NO;
+	if ( sHasFailed )
+	{
+		return nil;
+	}
+
+	Rtt_EAGLContext *result = nil;
+	@try
+	{
+		result = [[[Rtt_EAGLContext alloc] initWithAPI:Rtt_API_GLES3] autorelease];
+	}
+	@catch ( NSException * )
+	{
+		// MetalANGLE throws instead of returning nil.
+	}
+	sHasFailed = ( nil == result );
+	return result;
+}
+
+static Rtt_EAGLContext *
+CreateContext()
+{
+	BOOL isGLES3Enabled = IsGLES3Enabled();
+	Rtt_EAGLContext *result = isGLES3Enabled ? CreateGLES3Context() : nil;
+	if ( ! result )
+	{
+		result = [[[Rtt_EAGLContext alloc] initWithAPI:Rtt_API_GLES2] autorelease];
+	}
+	if ( isGLES3Enabled && result )
+	{
+		NSLog( @"OpenGL ES %d context created", (int)result.API );
+	}
+	return result;
+}
+
+// ----------------------------------------------------------------------------
+
 @implementation CoronaViewController
 
 //-(void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator
@@ -68,7 +115,7 @@
 		UIScreen *screen = [UIScreen mainScreen];
 		CGRect screenBounds = screen.bounds; // includes status bar
 		
-		if(!self.context) self.context = [[[Rtt_EAGLContext alloc] initWithAPI:Rtt_API_GLES2] autorelease];
+		if(!self.context) self.context = CreateContext();
 
 
 		CoronaView *view = [[CoronaView alloc] initWithFrame:screenBounds context:self.context];
@@ -84,7 +131,7 @@
 {
     [super viewDidLoad];
     
-    if(!self.context) self.context = [[[Rtt_EAGLContext alloc] initWithAPI:Rtt_API_GLES2] autorelease];
+    if(!self.context) self.context = CreateContext();
 
     if ( ! self.context )
 	{

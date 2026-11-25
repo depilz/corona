@@ -132,6 +132,7 @@ public class CoronaGLSurfaceView extends GLSurfaceView {
 
 		// Set up rendering system to use OpenGL ES 2.0.
 		setEGLContextClientVersion(2);
+		setPrefersGLES3(android.os.Build.VERSION.SDK_INT >= 18 && isGLES3Enabled(context));
 
 		// Set up OpenGL to render with a 32-bit color depth. (The default is 16-bit.)
 		// This must be done before setting the renderer below.
@@ -158,6 +159,18 @@ public class CoronaGLSurfaceView extends GLSurfaceView {
 
 		// Enable logging.
 		setDebugFlags(GLSurfaceView.DEBUG_CHECK_GL_ERROR | GLSurfaceView.DEBUG_LOG_GL_CALLS);
+	}
+
+	private static boolean isGLES3Enabled(android.content.Context context) {
+		try {
+			android.os.Bundle metaData = context.getPackageManager().getApplicationInfo(
+					context.getPackageName(), android.content.pm.PackageManager.GET_META_DATA).metaData;
+			Object value = (metaData != null) ? metaData.get("useGLES3") : null;
+			return Boolean.TRUE.equals(value) || "true".equals(value);
+		}
+		catch (Exception ex) {
+			return false;
+		}
 	}
 
 	public void setActivity(android.app.Activity activity) {

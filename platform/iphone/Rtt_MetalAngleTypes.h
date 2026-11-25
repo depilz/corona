@@ -15,6 +15,7 @@ typedef MGLKViewController Rtt_GLKViewController;
 typedef MGLKView Rtt_GLKView;
 
 #define Rtt_API_GLES2 kMGLRenderingAPIOpenGLES2
+#define Rtt_API_GLES3 kMGLRenderingAPIOpenGLES3
 #define Rtt_DrawableDepth24 MGLDrawableDepthFormat24
 
 #else
@@ -25,6 +26,7 @@ typedef GLKViewController Rtt_GLKViewController;
 typedef GLKView Rtt_GLKView;
 
 #define Rtt_API_GLES2 kEAGLRenderingAPIOpenGLES2
+#define Rtt_API_GLES3 kEAGLRenderingAPIOpenGLES3
 #define Rtt_DrawableDepth24 GLKViewDrawableDepthFormat24
 
 #endif
