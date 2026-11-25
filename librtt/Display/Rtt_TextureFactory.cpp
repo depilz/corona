@@ -325,7 +325,7 @@ TextureFactory::FindOrCreate(
 			// Cached only once uploaded (SweepCache): an image dropped before its first draw is never decoded for the cache.
 			if ( fCacheBudget > 0 && MPlatform::kResourceDir == baseDir )
 			{
-				PendingTexture pending = { result, MakeCacheInputs( flags, isMask, isRetina, bitmap->GetMipmaps() ) };
+				PendingTexture pending = { result, MakeCacheInputs( flags, isMask, isRetina, bitmap->GetMipmaps() ), false };
 				fPendingTextures[key] = pending;
 			}
 		}
@@ -873,17 +873,22 @@ TextureFactory::PromotePendingTextures()
 	PendingTextures::iterator it = fPendingTextures.begin();
 	while ( it != fPendingTextures.end() )
 	{
-		SharedPtr< TextureResource > resource( it->second.resource );
+		PendingTexture& pending = it->second;
+		SharedPtr< TextureResource > resource( pending.resource );
 		const bool isNotUploaded = resource.NotNull() && NULL == resource->GetTexture().GetGPUResource();
-		if ( isNotUploaded )
+
+		// Promoted one sweep after upload: where Lua and render share an entry, an object removed in it holds its texture until the entry ends.
+		const bool isFirstSeenUploaded = resource.NotNull() && ! isNotUploaded && ! pending.wasSeenUploaded;
+		if ( isNotUploaded || isFirstSeenUploaded )
 		{
+			pending.wasSeenUploaded = isFirstSeenUploaded;
 			++it;
 			continue;
 		}
 
 		if ( resource.NotNull() && ! resource->GetTexture().LoadFailed() )
 		{
-			CachedTexture cached = { resource, it->second.inputs, fCacheSweepCount };
+			CachedTexture cached = { resource, pending.inputs, fCacheSweepCount };
 			fCachedTextures[it->first] = cached;
 		}
 		fPendingTextures.erase( it++ );

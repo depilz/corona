@@ -207,6 +207,7 @@ class TextureFactory
 		{
 			WeakPtr< TextureResource > resource;
 			CacheInputs inputs;
+			bool wasSeenUploaded;
 		};
 
 		struct CachedTexture
