@@ -247,10 +247,12 @@ add_library( corona SHARED
 		AndroidBaseNativeImageDecoder.cpp
 		AndroidImageData.cpp
 		AndroidImageDecoder.cpp
+		AndroidImageSniffer.cpp
 		AndroidJavaImageDecoder.cpp
 		AndroidKeyServices.cpp
 		AndroidNativePngDecoder.cpp
 		AndroidOperationResult.cpp
+		AndroidSystemImageDecoder.cpp
 		AndroidZipFileEntry.cpp
 
 		${Lua2CppOutputDir}/init.cpp
