@@ -77,6 +77,7 @@ public class Controller {
 	private Handler					myTimerHandler;
 	private Runnable				myTimerTask;
 	private int						myTimerMilliseconds;
+	private VsyncFrameTimer			myVsyncFrameTimer;
 	
 	private Context                 myContext;
 	private CoronaRuntime           myRuntime;
@@ -141,6 +142,13 @@ public class Controller {
         // This will create a handler that will be attached to the main thread
         myHandler = new Handler(Looper.getMainLooper());
         myTimerHandler = new Handler(Looper.getMainLooper());
+        if (Build.VERSION.SDK_INT >= 16 && isVsyncPacingEnabled(context)) {
+            myVsyncFrameTimer = new VsyncFrameTimer(myTimerHandler, new Runnable() {
+                public void run() {
+                    requestRender();
+                }
+            });
+        }
         myEventManager = new EventManager(this);
 		myResourceServices = new ResourceServices(CoronaEnvironment.getApplicationContext());
         
@@ -171,6 +179,18 @@ public class Controller {
 		myDefaultTextFieldPaddingInPixels = (int)(((double)verticalPadding / 2.0) + 0.5);
 	}
 	
+	private static boolean isVsyncPacingEnabled(Context context) {
+		try {
+			android.os.Bundle metaData = context.getPackageManager().getApplicationInfo(
+					context.getPackageName(), PackageManager.GET_META_DATA).metaData;
+			Object value = (metaData != null) ? metaData.get("vsyncPacing") : null;
+			return Boolean.TRUE.equals(value) || "true".equals(value);
+		}
+		catch (Exception ex) {
+			return false;
+		}
+	}
+
 	synchronized void init() {
 		myMediaManager.init();
 		mySensorManager.init();
@@ -459,7 +479,7 @@ public class Controller {
     }
 
     public void requestEventRender() {
-    	if (myTimerTask == null) {
+    	if (!isTimerRunning()) {
     		mySystemMonitor.update();
 			if (myGLView != null) {
 				myGLView.requestRender();
@@ -488,6 +508,11 @@ public class Controller {
     		return;
     	}
 
+    	if ( myVsyncFrameTimer != null ) {
+    		myVsyncFrameTimer.start(myTimerMilliseconds);
+    		return;
+    	}
+
     	if ( myTimerTask == null ) {
     		myTimerTask = new Runnable() {
 				public void run() {
@@ -508,12 +533,20 @@ public class Controller {
     }
     
     public void stopTimer() {
+    	if ( myVsyncFrameTimer != null ) {
+    		myVsyncFrameTimer.stop();
+    	}
     	if ( myTimerTask != null ) {
     		myTimerHandler.removeCallbacks(myTimerTask);
     		myTimerTask = null;
     	}
     }
     
+    // True while a frame driver is running, so events need no render of their own.
+    private boolean isTimerRunning() {
+    	return myTimerTask != null || (myVsyncFrameTimer != null && myVsyncFrameTimer.isRunning());
+    }
+
     public void displayUpdate() {
 		if (myGLView != null) {
 			myGLView.setNeedsSwap();
