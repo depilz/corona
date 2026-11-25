@@ -140,6 +140,43 @@ local function addLiveBuildsPlist(buildSettingsPlist, options)
 	return buildSettingsPlist
 end
 
+-- config.lua is scanned as text: it can't run here, where "display" and "system" don't exist.
+local function configAsksFor120Fps( srcAssets )
+	local file = srcAssets and io.open( srcAssets .. "/config.lua", "r" )
+	if not file then
+		return false
+	end
+
+	local source = file:read( "*a" )
+	file:close()
+	if not source then
+		return false
+	end
+
+	local code = source
+	local start = code:find( "--", 1, true )
+	while start do
+		local _, finish = code:find( "^%-%-%[(=*)%[.-%]%1%]", start )
+		if not finish then
+			_, finish = code:find( "^[^\r\n]*", start )
+		end
+		code = code:sub( 1, start - 1 ) .. " " .. code:sub( finish + 1 )
+		start = code:find( "--", start, true )
+	end
+
+	local number120 = "%f[%w_.]120%f[^%w_.]"
+	for start in code:gmatch( '%f[%w_]fps%f[^%w_]["\']?%s*%]?%s*=%s*()[^=,;}\r\n]' ) do
+		local value = code:match( '^[^,;}\r\n]+', start )
+		local number, rest = value:match( '^["\']?([%d.]+)["\']?(.*)$' )
+		local word = rest and rest:match( '^%s+([%a_]+)' )
+		local isPlainNumber = number and ( rest:match( '^%s*$' ) or ( word and word ~= "and" and word ~= "or" ) )
+		if isPlainNumber and tonumber( number ) == 120 or ( not isPlainNumber and code:find( number120 ) ) then
+			return true
+		end
+	end
+	return false
+end
+
 function CoronaPListSupport.modifyPlist( options )
     local delegates
     -- The local iOS builds don't have options.tmpDir specified, iOS builds through the simulator do
@@ -363,6 +400,10 @@ function CoronaPListSupport.modifyPlist( options )
 			-- add'l custom plist settings specific to iPhone
 			local buildSettingsPlist = settings.iphone and settings.iphone.plist
 			buildSettingsPlist = addLiveBuildsPlist(buildSettingsPlist, options)
+
+			if not isTemplateBuild and configAsksFor120Fps( options.srcAssets ) then
+				infoPlist.CADisableMinimumFrameDurationOnPhone = true
+			end
 
 			if buildSettingsPlist then
 				--print("Adding custom plist settings: ".. json.encode(buildSettingsPlist))

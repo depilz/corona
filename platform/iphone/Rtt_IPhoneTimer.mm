@@ -52,7 +52,8 @@ IPhoneTimer::Stop()
 void
 IPhoneTimer::SetViewControllerFPS()
 {
-	NSInteger fps = 1000.0 / fInterval;
+	// The core's 8 ms interval means 120 fps; dividing would request 125.
+	NSInteger fps = ( 8 == fInterval ) ? 120 : 1000.0 / fInterval;
 	fViewController.preferredFramesPerSecond = fps;
 }
 
@@ -76,6 +77,12 @@ bool
 IPhoneTimer::IsRunning() const
 {
 	return !fViewController.paused;
+}
+
+bool
+IPhoneTimer::SupportsFrameRate( U8 fps ) const
+{
+	return 120 == fps || Super::SupportsFrameRate( fps );
 }
 
 // ----------------------------------------------------------------------------
