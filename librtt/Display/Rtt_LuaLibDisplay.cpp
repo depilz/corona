@@ -1932,6 +1932,10 @@ DisplayLibrary::getDefault( lua_State *L )
         bool value = defaults.GetMipmaps();
         lua_pushboolean( L, value ? 1 : 0 );
     }
+    else if ( Rtt_StringCompare( key, "textureCacheBudget" ) == 0 )
+    {
+        lua_pushinteger( L, display.GetTextureFactory().GetCacheBudget() );
+    }
 	else if ( Rtt_StringCompare( key, "emitterScaling" ) == 0 )
 	{
 		EmitterObject::Mapping mapping = (EmitterObject::Mapping)defaults.GetEmitterMapping();
@@ -2121,6 +2125,13 @@ DisplayLibrary::setDefault( lua_State *L )
     {
         bool value = lua_toboolean( L, index ) ? true : false;
         defaults.SetMipmaps( value );
+    }
+    else if ( Rtt_StringCompare( key, "textureCacheBudget" ) == 0 )
+    {
+        // NaN or below 1 is off; clamped to the memory counter's maximum.
+        lua_Number value = lua_tonumber( L, index );
+        S32 bytes = ( value >= 1 ) ? (S32)Min( value, (lua_Number)2147483647 ) : 0;
+        display.GetTextureFactory().SetCacheBudget( bytes );
     }
 	else if ( Rtt_StringCompare( key, "emitterMapping" ) == 0 )
 	{

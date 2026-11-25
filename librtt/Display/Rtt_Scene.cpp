@@ -308,6 +308,9 @@ Scene::Render( Renderer& renderer, PlatformSurface& rTarget, ProfilingEntryRAII*
     Collect();
 	
 	ADD_ENTRY( "Scene: Collect" );
+
+    // After Swap: a texture with a GPU resource has been uploaded, so it can enter the cache.
+    fOwner.GetTextureFactory().SweepCache();
 }
 
 void
