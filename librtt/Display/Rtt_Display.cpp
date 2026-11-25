@@ -1083,6 +1083,8 @@ Display::Capture( DisplayObject *object,
 void
 Display::UnloadResources()
 {
+    // An idle texture without GPU data saves nothing: it is decoded again at its next draw.
+    GetTextureFactory().EmptyIdleCache();
     GetRenderer().ReleaseGPUResources();
 
     // Special case: Text objects use textures that are not backed by a file

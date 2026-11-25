@@ -235,6 +235,9 @@ class Renderer
         void SetCPUResourceObserver(MCPUResourceObserver *resourceObserver);
         void ReleaseGPUResources();
 
+        // Destroys the queued GPU resources now; needs a current rendering context.
+        void DrainDestroyQueue() { DestroyQueuedGPUResources(); }
+
         // When there is a GPU-dependency on time, e.g. the shader code,
         // we need to ensure re-blitting. These functions help tally each
         // time such a situation occurs.
