@@ -13,6 +13,7 @@
 #include "AndroidJavaImageDecoder.h"
 #include "AndroidNativePngDecoder.h"
 #include "AndroidOperationResult.h"
+#include "AndroidSystemImageDecoder.h"
 #include "Core/Rtt_Build.h"
 #include "Core/Rtt_String.h"
 #include "NativeToJavaBridge.h"
@@ -43,18 +44,17 @@ AndroidImageDecoder::~AndroidImageDecoder()
 // Public Member Functions
 // ----------------------------------------------------------------------------
 
-/// Looks up where the given PNG file lives, via JNI, so that later decodes of it can skip that lookup.
+/// Looks up where the given PNG or JPEG file lives, via JNI, so that later decodes of it can skip that lookup.
 /// <br>
 /// Binds this decoder to the given file: every later decode is expected to be given the same path.
-/// The location is kept only if the native PNG decoder can read the file as is, which is
+/// The location is kept only if the native decoders can read the file as is, which is
 /// a plain file or an uncompressed entry within the APK or expansion file.
-/// A JPEG file is noted instead, since only Java decodes it.
 /// Must be called on a thread attached to the Java VM.
 /// @param filePath The name and path of the image file. Cannot be NULL or empty.
 void AndroidImageDecoder::ResolveFileLocation(const char *filePath)
 {
 	fIsJpegFile = Rtt_StringEndsWithNoCase(filePath, ".jpg") || Rtt_StringEndsWithNoCase(filePath, ".jpeg");
-	if (!Rtt_StringEndsWithNoCase(filePath, ".png"))
+	if (!fIsJpegFile && !Rtt_StringEndsWithNoCase(filePath, ".png"))
 	{
 		return;
 	}
@@ -72,12 +72,20 @@ void AndroidImageDecoder::ResolveFileLocation(const char *filePath)
 	}
 }
 
+/// Determines if ResolveFileLocation() found a location the native decoders can read the file from.
+/// @return Returns true if the file is a PNG or JPEG whose location was resolved to a plain file or
+///         an uncompressed package entry.
+bool AndroidImageDecoder::IsFileLocationResolved() const
+{
+	return (fFileLocation != kUnresolved);
+}
+
 /// Determines if DecodeNativelyFromFile() can decode the file given to ResolveFileLocation().
 /// @return Returns true if the file is a PNG whose location was resolved to a plain file or
 ///         an uncompressed package entry.
 bool AndroidImageDecoder::CanDecodeNatively() const
 {
-	return (fFileLocation != kUnresolved);
+	return IsFileLocationResolved() && !fIsJpegFile;
 }
 
 /// Decodes the file given to ResolveFileLocation() with the native PNG decoder only.
@@ -106,14 +114,19 @@ bool AndroidImageDecoder::CanDecodeOffThread() const
 
 /// Decodes the file given to ResolveFileLocation() on a thread that does not run Lua.
 /// <br>
-/// A PNG is decoded as by DecodeNativelyFromFile(). A JPEG is decoded by Java on the calling thread,
-/// which gets attached to the Java VM until it exits; a Java exception fails the decode
-/// instead of raising a Lua error.
+/// The system image decoder is tried first. Otherwise a PNG is decoded as by DecodeNativelyFromFile(),
+/// and a JPEG is decoded by Java on the calling thread, which gets attached to the Java VM until it exits;
+/// a Java exception fails the decode instead of raising a Lua error.
 /// @param filePath The name and path of the image file given to ResolveFileLocation().
 /// @return Returns the result of the image decoding operation, as described by OnDecodeFromFile().
 ///         Fails if CanDecodeOffThread() returns false.
 AndroidOperationResult AndroidImageDecoder::DecodeOffThreadFromFile(const char *filePath)
 {
+	AndroidOperationResult result = DecodeWithSystemDecoder(filePath);
+	if (result.HasSucceeded())
+	{
+		return result;
+	}
 	if (CanDecodeNatively())
 	{
 		return DecodeNativelyFromFile(filePath);
@@ -146,9 +159,14 @@ AndroidOperationResult AndroidImageDecoder::DecodeOffThreadFromFile(const char *
 ///         GetErrorMessage() function will typically provide a reason why it failed.
 AndroidOperationResult AndroidImageDecoder::OnDecodeFromFile(const char *filePath)
 {
-	AndroidOperationResult result;
+	// First, attempt to load the image file with the system image decoder.
+	AndroidOperationResult result = DecodeWithSystemDecoder(filePath);
+	if (result.HasSucceeded())
+	{
+		return result;
+	}
 
-	// First, attempt to load the image file natively on the C/C++ side.
+	// Next, attempt to load the image file natively on the C/C++ side.
 	if (CanDecodeNatively())
 	{
 		result = DecodeNativelyFromFile(filePath);
@@ -168,4 +186,28 @@ AndroidOperationResult AndroidImageDecoder::OnDecodeFromFile(const char *filePat
 
 	// Return the result.
 	return result;
+}
+
+
+// ----------------------------------------------------------------------------
+// Private Member Functions
+// ----------------------------------------------------------------------------
+
+/// Decodes the file given to ResolveFileLocation() with the system image decoder only.
+/// <br>
+/// Makes no JNI or Lua calls. The system decoder and every file it opened are released before
+/// this returns, so a Java fallback that raises a Lua error cannot skip their release.
+/// @param filePath The name and path of the image file given to ResolveFileLocation().
+/// @return Returns a success result if the system image decoder took the file.
+///         Returns a failed result, leaving no pixel buffer in the target, if it did not
+///         or if the file's location was not resolved.
+AndroidOperationResult AndroidImageDecoder::DecodeWithSystemDecoder(const char *filePath)
+{
+	if (!IsFileLocationResolved())
+	{
+		return AndroidOperationResult::FailedWith(GetAllocator(), "Image file location was not resolved.");
+	}
+
+	AndroidSystemImageDecoder systemDecoder(*this, (kPackageEntry == fFileLocation) ? &fPackageEntry : NULL);
+	return systemDecoder.DecodeFromFile(filePath);
 }

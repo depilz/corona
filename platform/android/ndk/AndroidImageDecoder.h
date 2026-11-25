@@ -30,6 +30,7 @@ class AndroidImageDecoder : public AndroidBaseImageDecoder
 		virtual ~AndroidImageDecoder();
 
 		void ResolveFileLocation(const char *filePath);
+		bool IsFileLocationResolved() const;
 		bool CanDecodeNatively() const;
 		AndroidOperationResult DecodeNativelyFromFile(const char *filePath);
 		bool CanDecodeOffThread() const;
@@ -39,6 +40,8 @@ class AndroidImageDecoder : public AndroidBaseImageDecoder
 		AndroidOperationResult OnDecodeFromFile(const char *filePath);
 
 	private:
+		AndroidOperationResult DecodeWithSystemDecoder(const char *filePath);
+
 		enum FileLocation
 		{
 			kUnresolved,
