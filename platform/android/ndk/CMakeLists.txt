@@ -252,6 +252,7 @@ add_library( corona SHARED
 		AndroidKeyServices.cpp
 		AndroidNativePngDecoder.cpp
 		AndroidOperationResult.cpp
+		AndroidSystemImageDecoder.cpp
 		AndroidZipFileEntry.cpp
 
 		${Lua2CppOutputDir}/init.cpp
