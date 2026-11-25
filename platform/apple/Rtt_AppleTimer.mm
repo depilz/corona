@@ -36,20 +36,77 @@ namespace Rtt
 
 // ----------------------------------------------------------------------------
 
+#ifdef Rtt_MAC_ENV
+
+static double
+CoreGraphicsRate( double modeRate )
+{
+	return modeRate > 0.0 ? modeRate : 60.0;
+}
+
+static double
+ScreenRate( NSView *view )
+{
+	NSScreen *screen = [[view window] screen];
+	if ( ! screen )
+	{
+		return 0.0;
+	}
+
+	if ( @available( macOS 12.0, * ) )
+	{
+		return [screen maximumFramesPerSecond];
+	}
+
+	CGDirectDisplayID display = [[[screen deviceDescription] objectForKey:@"NSScreenNumber"] unsignedIntValue];
+	CGDisplayModeRef mode = CGDisplayCopyDisplayMode( display );
+	if ( ! mode )
+	{
+		return 0.0;
+	}
+
+	double rate = CoreGraphicsRate( CGDisplayModeGetRefreshRate( mode ) );
+	CGDisplayModeRelease( mode );
+	return rate;
+}
+
+static double
+TickRate( double screenRate, double lastRate )
+{
+	return screenRate > 0.0 ? ( screenRate < 120.0 ? screenRate : 120.0 ) : lastRate;
+}
+
+static void
+RemoveObserver( id& observer )
+{
+	if ( observer )
+	{
+		[[NSNotificationCenter defaultCenter] removeObserver:observer];
+		[observer release];
+		observer = nil;
+	}
+}
+
+#endif
+
 // Timer is optimized for rendering. To avoid screen tearing and stuttering,
 // timing should synchronized with the refresh rate of the display.
 // 
 // * (TODO:) On Mac OS 10.4 or later, use CVDisplayLink: http://developer.apple.com/mac/library/qa/qa2004/qa1385.html
 // * On iPhone OS 3.1 or later, use CADisplayLink.
 // 
-AppleTimer::AppleTimer( MCallback& callback )
+AppleTimer::AppleTimer( MCallback& callback, id view )
 :	Super( callback ),
 	fDisplayLink( nil ),
 	fTimer( nil ),
 	fTarget( [[AppleCallback alloc] init] ),
 	fInterval( 0x8000000 ),
 	fDisplayLinkSupported( false ),
-	fSavedInterval( fInterval )
+	fSavedInterval( fInterval ),
+	fView( [view retain] ),
+	fScreenObserver( nil ),
+	fWindowObserver( nil ),
+	fTickRate( 120.0 )
 {
 #if (MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_5)
 	fTarget.callback = & callback;
@@ -67,6 +124,7 @@ AppleTimer::~AppleTimer()
 	Stop();
 	[fTarget release];
 	[fDisplayLink release];
+	[fView release];
 }
 
 void
@@ -136,6 +194,39 @@ AppleTimer::Start()
 	else
 #endif
 	{
+#ifdef Rtt_MAC_ENV
+		// 8 ms means fps 120: tick at the screen's rate up to 120, so a 60 Hz screen gets 60.
+		if ( 8 == fInterval )
+		{
+			fTickRate = TickRate( ScreenRate( fView ), fTickRate );
+			interval = 1.0 / fTickRate;
+
+			if ( ! fScreenObserver )
+			{
+				void (^screenChanged)( NSNotification * ) = ^( NSNotification * )
+				{
+					double lastRate = fTickRate;
+					fTickRate = TickRate( ScreenRate( fView ), fTickRate );
+					if ( fTickRate != lastRate && [fTimer isValid] )
+					{
+						[fTimer invalidate];
+						[fTimer release];
+						fTimer = nil;
+						Start();
+					}
+				};
+
+				NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+				fScreenObserver = [[center addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:nil usingBlock:screenChanged] retain];
+				NSWindow *window = [fView window];
+				if ( window )
+				{
+					fWindowObserver = [[center addObserverForName:NSWindowDidChangeScreenNotification object:window queue:nil usingBlock:screenChanged] retain];
+				}
+			}
+		}
+#endif
+
 		fTimer = [NSTimer
 					scheduledTimerWithTimeInterval:interval
 					target:fTarget
@@ -175,6 +266,11 @@ AppleTimer::Stop()
 	[fTimer invalidate];
 	[fTimer release];
 	fTimer = nil;
+
+#ifdef Rtt_MAC_ENV
+	RemoveObserver( fScreenObserver );
+	RemoveObserver( fWindowObserver );
+#endif
 }
 
 void
@@ -196,6 +292,16 @@ bool
 AppleTimer::IsRunning() const
 {
 	return ( ( nil != fDisplayLink ) || ( true == [fTimer isValid] ) );
+}
+
+bool
+AppleTimer::SupportsFrameRate( U8 fps ) const
+{
+#ifdef Rtt_MAC_ENV
+	return 120 == fps || Super::SupportsFrameRate( fps );
+#else
+	return Super::SupportsFrameRate( fps );
+#endif
 }
 
 // ----------------------------------------------------------------------------
