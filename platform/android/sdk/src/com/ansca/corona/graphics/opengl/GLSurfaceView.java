@@ -575,6 +575,12 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
         mGLThread.onResume();
     }
 
+    public void releaseEglContext() {
+        synchronized (sGLThreadManager) {
+            mGLThread.requestReleaseEglContextLocked();
+        }
+    }
+
     /**
      * Queue a runnable to be run on the GL rendering thread. This can be used
      * to communicate with the Renderer on the rendering thread.

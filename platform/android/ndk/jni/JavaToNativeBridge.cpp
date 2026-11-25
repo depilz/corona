@@ -805,9 +805,7 @@ JavaToNativeBridge::Pause()
 	fRuntime->Suspend();
 	fNativeToJavaBridge->OnRuntimeSuspended();
 
-	// Free up memory by deleting loaded resources such as bitmaps and audio data. This will help prevent this
-	// app from being terminated by the operating system if there is not enough memory to load the next activity.
-	UnloadResources();
+	// GPU resources stay resident across pause; only CoronaActivity.onTrimMemory's background trim releases them.
 }
 
 void 
