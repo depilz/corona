@@ -242,8 +242,15 @@ static ALuint Is_Playing_global = 0;
  */
 static ALboolean g_StreamThreadEnabled = AL_FALSE;
 static SDL_mutex* s_simpleLock;
+/* Always taken after s_simpleLock, never the other way round. */
+static SDL_mutex* s_decodeLock;
+static ALmixer_Data* s_decodingData = NULL;
 static SDL_Thread* Stream_Thread_global = NULL;
 #endif /* ENABLE_ALMIXER_THREADS */
+
+/* Update thread only: the last decoded stream chunk, filled outside s_simpleLock */
+static void* s_stagingBuffer = NULL;
+static ALuint s_stagingSize = 0;
 
 static LinkedList* s_listOfALmixerData = NULL;
 
@@ -487,6 +494,7 @@ static struct ALmixer_Channel
 	ALboolean paused;
 	ALuint alsource;
 	ALmixer_Data* almixer_data;
+	ALuint generation;
 	ALint loops;
 	ALint expire_ticks;
 	ALuint start_time;
@@ -622,6 +630,7 @@ static void Init_Channel(ALint channel)
 	ALmixer_Channel_List[channel].min_volume = 0.0f;
 	
 	ALmixer_Channel_List[channel].almixer_data = NULL;
+	ALmixer_Channel_List[channel].generation = 0;
 }
 /* Quick helper function to clean up a channel 
  * after it's done playing */
@@ -676,6 +685,29 @@ static void Clean_Channel(ALint channel)
 	*/
 
 	ALmixer_Channel_List[channel].almixer_data = NULL;
+	ALmixer_Channel_List[channel].generation++;
+}
+
+/* Called with s_simpleLock held before a main-thread path touches a stream's Sound_Sample:
+ * waits out the update thread's unlocked decode of it and makes the update thread drop that chunk.
+ */
+static void Claim_Stream_Sample(ALmixer_Data* data)
+{
+	ALint i;
+#ifdef ENABLE_ALMIXER_THREADS
+	if(data == s_decodingData)
+	{
+		SDL_LockMutex(s_decodeLock);
+		SDL_UnlockMutex(s_decodeLock);
+	}
+#endif
+	for(i=0; i<Number_of_Channels_global; i++)
+	{
+		if(ALmixer_Channel_List[i].almixer_data == data)
+		{
+			ALmixer_Channel_List[i].generation++;
+		}
+	}
 }
 
 /* What shoud this return?
@@ -1340,13 +1372,13 @@ fprintf(stderr, ">>>>>>>CopyData catch, albuffer=%d\n",buffer);
 }
 
 
-/* For streamed data, gets more data
- * and prepares it in the active Mix_chunk
+/* Decodes the next chunk of a stream into data->sample->buffer.
+ * A clean 0-byte read sets *hit_eof; a decode error returns 0 without it.
  */
-static ALuint GetMoreData(ALmixer_Data* data, ALuint buffer)
+static ALuint DecodeMoreData(ALmixer_Data* data, ALboolean* hit_eof)
 {
 	ALuint bytes_decoded;
-	ALenum error;
+	*hit_eof = AL_FALSE;
 	if( ! ( data && data->sample ) )
 	{
 		ALmixer_SetError("Cannot GetMoreData() because ALmixer_Data or Sound_Sample are NULL");
@@ -1369,7 +1401,7 @@ static ALuint GetMoreData(ALmixer_Data* data, ALuint buffer)
 	/* Will return 0 bytes and pass the buck to check sample->flags */
 	if(0 == bytes_decoded)
 	{
-		data->eof = 1;
+		*hit_eof = AL_TRUE;
 
 #if 0 
 fprintf(stderr, "Hit eof while trying to buffer\n");
@@ -1475,13 +1507,19 @@ fprintf(stderr, "Hit eof while trying to buffer\n");
 /******* END REMOVE ME ********************************/
 #endif
 
+	return bytes_decoded;
+}
+
+static ALuint BufferMoreData(ALmixer_Data* data, ALuint buffer, const void* bytes, ALuint num_bytes)
+{
+	ALenum error;
 	/* Now copy the data to the OpenAL buffer */
 	/* We can't just set a pointer because the API needs
 	 * its own copy to assist hardware acceleration */
 	alBufferData(buffer,
 		TranslateFormat(&data->sample->desired), 
-		data->sample->buffer,
-		bytes_decoded,
+		bytes,
+		num_bytes,
 		data->sample->desired.rate
 	);
 	if( (error = alGetError()) != AL_NO_ERROR)
@@ -1493,8 +1531,96 @@ fprintf(stderr, "Hit eof while trying to buffer\n");
 	/* If we need to, copy the data also to the access area 
 	 * (the function will do the check for us)
 	 */
-	CopyDataToAccessBuffer(data, bytes_decoded, buffer);
-	return bytes_decoded;
+	CopyDataToAccessBuffer(data, num_bytes, buffer);
+	return num_bytes;
+}
+
+/* For streamed data, gets more data
+ * and prepares it in the active Mix_chunk
+ */
+static ALuint GetMoreData(ALmixer_Data* data, ALuint buffer)
+{
+	ALboolean hit_eof;
+	ALuint bytes_decoded = DecodeMoreData(data, &hit_eof);
+	if(hit_eof)
+	{
+		data->eof = 1;
+	}
+	if(0 == bytes_decoded)
+	{
+		return 0;
+	}
+	return BufferMoreData(data, buffer, data->sample->buffer, bytes_decoded);
+}
+
+typedef struct Stream_Chunk
+{
+	ALuint num_bytes; /* in s_stagingBuffer */
+	ALboolean hit_eof; /* the first read found the end */
+	ALboolean looped; /* the first read gave nothing and loops were left, so the sample was rewound */
+	ALboolean rewind_failed;
+} Stream_Chunk;
+
+/* Decodes one chunk, rewinding and decoding again at the end when may_loop, and copies it to staging */
+static void Decode_Into_Staging(ALmixer_Data* data, ALboolean may_loop, Stream_Chunk* chunk)
+{
+	chunk->looped = AL_FALSE;
+	chunk->rewind_failed = AL_FALSE;
+	chunk->num_bytes = DecodeMoreData(data, &chunk->hit_eof);
+	if( (0 == chunk->num_bytes) && may_loop )
+	{
+		ALboolean ignored_eof;
+		chunk->looped = AL_TRUE;
+		if(0 == Sound_Rewind(data->sample))
+		{
+			ALmixer_SetError( Sound_GetError() );
+			chunk->rewind_failed = AL_TRUE;
+			return;
+		}
+		chunk->num_bytes = DecodeMoreData(data, &ignored_eof);
+	}
+	if(0 == chunk->num_bytes)
+	{
+		return;
+	}
+	if(chunk->num_bytes > s_stagingSize)
+	{
+		void* grown = realloc(s_stagingBuffer, chunk->num_bytes);
+		if(NULL == grown)
+		{
+			ALmixer_SetError("Out of memory for the stream staging buffer");
+			chunk->num_bytes = 0;
+			return;
+		}
+		s_stagingBuffer = grown;
+		s_stagingSize = chunk->num_bytes;
+	}
+	memcpy(s_stagingBuffer, data->sample->buffer, chunk->num_bytes);
+}
+
+/* Update thread, entered and left with s_simpleLock held: decodes the channel's next stream chunk
+ * with s_simpleLock released. Returns AL_FALSE when the chunk must be dropped because the channel
+ * was halted, replayed, rewound, seeked or freed meanwhile, or an interruption began.
+ */
+static ALboolean Decode_Stream_Chunk(ALint channel, ALboolean may_loop, Stream_Chunk* chunk)
+{
+	ALmixer_Data* data = ALmixer_Channel_List[channel].almixer_data;
+	ALuint generation = ALmixer_Channel_List[channel].generation;
+#ifdef ENABLE_ALMIXER_THREADS
+	s_decodingData = data;
+	SDL_LockMutex(s_decodeLock);
+	SDL_UnlockMutex(s_simpleLock);
+#endif
+	Decode_Into_Staging(data, may_loop, chunk);
+#ifdef ENABLE_ALMIXER_THREADS
+	SDL_UnlockMutex(s_decodeLock);
+	SDL_LockMutex(s_simpleLock);
+	s_decodingData = NULL;
+#endif
+	return (AL_FALSE == g_inInterruption)
+		&& (channel < Number_of_Channels_global)
+		&& (ALmixer_Channel_List[channel].almixer_data == data)
+		&& (ALmixer_Channel_List[channel].generation == generation);
 }
 
 
@@ -2246,6 +2372,7 @@ static ALboolean Internal_RewindData(ALmixer_Data* data)
 	
 	/* Remaining stuff for streamed data */
 	
+	Claim_Stream_Sample(data);
 	data->eof = 0;
 	retval = Sound_Rewind(data->sample);
 	if(0 == retval)
@@ -2510,6 +2637,7 @@ static ALint Internal_PlayChannelTimed(ALint channel, ALmixer_Data* data, ALint 
 			ALmixer_SetError("Can't play shared streamed sample because it is already in use");
 			return -1;
 		}
+		Claim_Stream_Sample(data);
 
 		/* Make sure SDL_sound sample is not at EOF.
 		 * This mainly affects streamed files,
@@ -3356,6 +3484,7 @@ static ALboolean Internal_SeekData(ALmixer_Data* data, ALuint msec)
 	else
 	{
 		/* Reset eof flag?? */
+		Claim_Stream_Sample(data);
 		data->eof = 0;
 		retval = Sound_Seek(data->sample, msec);
 		if(0 == retval)
@@ -5641,62 +5770,27 @@ static ALint Update_ALmixer(void* data)
 					if (!ALmixer_Channel_List[i].almixer_data->eof)
 					{
 						ALuint bytes_returned;
+						Stream_Chunk chunk;
 						/* We have a priority. We first must assign
 						 * unused buffers in reserve. If there is nothing
-						 * left, then we may unqueue buffers. We can't
-						 * do it the other way around because we will
-						 * lose the pointer to the unqueued buffer 
+						 * left, then we may unqueue buffers (after the decode,
+						 * so a dropped chunk keeps its buffer in the queue).
 						 */
-						if(ALmixer_Channel_List[i].almixer_data->num_buffers_in_use 
+						if( (ALmixer_Channel_List[i].almixer_data->num_buffers_in_use
 							< ALmixer_Channel_List[i].almixer_data->max_queue_buffers) 
+							|| (buffers_processed > 0) )
 						{		
-	#if 0
-							fprintf(stderr, "Getting more data in NOT_EOF and num_buffers_in_use (%d) < max_queue (%d)\n", 
-									ALmixer_Channel_List[i].almixer_data->num_buffers_in_use,
-									ALmixer_Channel_List[i].almixer_data->max_queue_buffers);
-	#endif
-							/* Going to add an unused packet.
-							 * Grab next packet */
-							bytes_returned = GetMoreData(
-								ALmixer_Channel_List[i].almixer_data,
-								ALmixer_Channel_List[i].almixer_data->buffer[
-									ALmixer_Channel_List[i].almixer_data->num_buffers_in_use]
-								);
-						}
-						/* For processed > 0 */
-						else if(buffers_processed > 0)
-						{
-							/* Unqueue only 1 buffer for now.
-							 * If there are more than one,
-							 * let the next Update pass deal with it
-							 * so we don't stall the program for too long.
-							 */
-	#if 0
-					fprintf(stderr, "About to Unqueue, Buffers processed = %d\n", buffers_processed);
-					fprintf(stderr, "Buffers queued= %d\n", buffers_still_queued);
-					fprintf(stderr, "Unqueuing a buffer\n");
-	#endif
-							alSourceUnqueueBuffers(
-								ALmixer_Channel_List[i].alsource,
-								1, &unqueued_buffer_id
-							);
-							if((error = alGetError()) != AL_NO_ERROR)
+							if(AL_FALSE == Decode_Stream_Chunk(i, (0 != ALmixer_Channel_List[i].loops), &chunk))
 							{
-					fprintf(stderr, "Error with unqueue: %s, buffer id is %d",
-								alGetString(error), unqueued_buffer_id);
-								ALmixer_SetError("Unqueue buffer failed: %s",
-									alGetString(error) );
-								error_flag--;
+								if(AL_TRUE == g_inInterruption)
+								{
+#ifdef ENABLE_ALMIXER_THREADS
+									SDL_UnlockMutex(s_simpleLock);
+#endif
+									return 0;
+								}
+								break;
 							}
-	/*
-							fprintf(stderr, "Right after unqueue...");
-							PrintQueueStatus(ALmixer_Channel_List[i].alsource);
-							fprintf(stderr, "Getting more data for NOT_EOF, max_buffers filled\n");
-	*/
-							/* Grab unqueued packet */
-							bytes_returned = GetMoreData(
-								ALmixer_Channel_List[i].almixer_data,
-								unqueued_buffer_id);
 						}
 						/* We are still streaming, but currently
 						 * don't need to fill any buffers */
@@ -5754,6 +5848,35 @@ static ALint Update_ALmixer(void* data)
 								 * to play.
 								 */
 								ALint temp_count;
+								chunk.num_bytes = 0;
+								chunk.hit_eof = AL_FALSE;
+								/* Get more data for the first buffer */
+								if( ALmixer_Channel_List[i].almixer_data->buffer )
+								{
+									// Verifying "buffer" is a quick-fix to avoid dereferencing a NULL pointer.
+									// A better solution is to find WHY this is happening in the first place.
+									if(AL_FALSE == Decode_Stream_Chunk(i, AL_FALSE, &chunk))
+									{
+										if(AL_TRUE == g_inInterruption)
+										{
+#ifdef ENABLE_ALMIXER_THREADS
+											SDL_UnlockMutex(s_simpleLock);
+#endif
+											return 0;
+										}
+										break;
+									}
+									alGetSourcei(
+										ALmixer_Channel_List[i].alsource,
+										AL_BUFFERS_PROCESSED,
+										&buffers_processed
+									);
+									if((error = alGetError()) != AL_NO_ERROR)
+									{
+										fprintf(stderr, "54dError, Can't get buffers_processed: %s\n",
+											alGetString(error));
+									}
+								}
 	#if 0
 								fprintf(stderr, "STOPPED1, need to clear processed=%d, status is:\n", buffers_processed);
 								PrintQueueStatus(ALmixer_Channel_List[i].alsource);
@@ -5803,19 +5926,20 @@ static ALint Update_ALmixer(void* data)
 								/* Reset the number of buffers in use to 0 */
 								ALmixer_Channel_List[i].almixer_data->num_buffers_in_use = 0;
 
-								/* Get more data and put it in the first buffer */
-								if( ALmixer_Channel_List[i].almixer_data->buffer )
+								if(chunk.hit_eof)
 								{
-									// Verifying "buffer" is a quick-fix to avoid dereferencing a NULL pointer.
-									// A better solution is to find WHY this is happening in the first place.
-									bytes_returned = GetMoreData(
-										ALmixer_Channel_List[i].almixer_data,
-										ALmixer_Channel_List[i].almixer_data->buffer[0]
-									);
+									ALmixer_Channel_List[i].almixer_data->eof = 1;
 								}
-								else
+								/* Put the data in the first buffer */
+								bytes_returned = 0;
+								if(chunk.num_bytes > 0)
 								{
-									bytes_returned = 0;
+									bytes_returned = BufferMoreData(
+										ALmixer_Channel_List[i].almixer_data,
+										ALmixer_Channel_List[i].almixer_data->buffer[0],
+										s_stagingBuffer,
+										chunk.num_bytes
+									);
 								}
 
 								/* NOTE: We might want to look for EOF and handle it here.
@@ -5910,111 +6034,82 @@ static ALint Update_ALmixer(void* data)
 					#if 0
 						else if(0 == bytes_returned)
 					#endif
-						if(0 == bytes_returned)
+						if(chunk.hit_eof)
 						{
-							/*
-					fprintf(stderr, "We got 0 bytes from reading. Checking for loops\n");
-					*/
-							/* Check for loops */
-							if( ALmixer_Channel_List[i].loops != 0 )
+							ALmixer_Channel_List[i].almixer_data->eof = 1;
+						}
+						if(chunk.looped)
+						{
+							if(chunk.rewind_failed)
 							{
-								/* We have to loop, so rewind
-								 * and fetch more data 
-								 */
-								/*
-					fprintf(stderr, "Rewinding data\n");
-					*/
-								if(0 == Sound_Rewind(
-									ALmixer_Channel_List[i].almixer_data->sample))
-								{
-					fprintf(stderr, "Rewinding failed\n");
-									ALmixer_SetError( Sound_GetError() );
-									ALmixer_Channel_List[i].loops = 0;
-									error_flag--;
-									/* We'll continue on because we do have some valid data */
-									continue;
-								}
-								/* Remember to reset the data->eof flag */
-								ALmixer_Channel_List[i].almixer_data->eof = 0;
-								if(ALmixer_Channel_List[i].loops > 0)
-								{
-									ALmixer_Channel_List[i].loops--;
-								}
-								/* Try grabbing another packet now.
-								 * Since we may have already unqueued a
-								 * buffer, we don't want to lose it.
-								 */
-								if(ALmixer_Channel_List[i].almixer_data->num_buffers_in_use 
-									< ALmixer_Channel_List[i].almixer_data->max_queue_buffers) 
-								{
-									/*
-					fprintf(stderr, "We got %d bytes from reading loop. Filling unused packet\n", bytes_returned);
-					*/
-									/* Grab next packet */
-									bytes_returned = GetMoreData(
-										ALmixer_Channel_List[i].almixer_data,
-											ALmixer_Channel_List[i].almixer_data->buffer[
-											ALmixer_Channel_List[i].almixer_data->num_buffers_in_use]
-									);
-									/*
-					fprintf(stderr, "We reread %d bytes into unused packet\n", bytes_returned);
-					*/
-								}
-								/* Refilling unqueued packet */
-								else
-								{
-									/*
-					fprintf(stderr, "We got %d bytes from reading loop. Filling unqueued packet\n", bytes_returned);
-					*/
-									/* Grab next packet */
-									bytes_returned = GetMoreData(
-										ALmixer_Channel_List[i].almixer_data,
-										unqueued_buffer_id);
-									/*
-					fprintf(stderr, "We reread %d bytes into unqueued packet\n", bytes_returned);
-					*/
-								}	
-								/* Another error check */
-								/*
-								if(bytes_returned <= 0)
-								*/
-								if(0 == bytes_returned)
-								{
-			fprintf(stderr, "??????????ERROR\n");
-									ALmixer_SetError("Could not loop because after rewind, no data could be retrieved");
-									/* Problem occurred...not sure what to do */
-									/* Go to next loop? */
-									error_flag--;
-									/* Set the eof flag to force a quit so 
-									 * we don't get stuck in an infinite loop
-									 */
-									ALmixer_Channel_List[i].almixer_data->eof = 1;
-									continue;
-								}	
-								/* We made it to the end. We still need 
-								 * to BufferData, so let this branch
-								 * fall into the next piece of 
-								 * code below which will handle that 
-								 */
-
-								
-							} /* END loop check */
-							else
-							{
-								/* No more loops to do. 
-								 * EOF flag should be set.
-								 * Just go to next loop and
-								 * let things be handled correctly
-								 * in future update calls
-								 */
-	/*
-							fprintf(stderr, "SHOULD BE EOF\n");
-								
-								PrintQueueStatus(ALmixer_Channel_List[i].alsource);
-	*/							
+								fprintf(stderr, "Rewinding failed\n");
+								ALmixer_Channel_List[i].loops = 0;
+								error_flag--;
 								continue;
 							}
-						} /* END if bytes_returned == 0 */
+							/* Remember to reset the data->eof flag */
+							ALmixer_Channel_List[i].almixer_data->eof = 0;
+							if(ALmixer_Channel_List[i].loops > 0)
+							{
+								ALmixer_Channel_List[i].loops--;
+							}
+							if(0 == chunk.num_bytes)
+							{
+								fprintf(stderr, "??????????ERROR\n");
+								ALmixer_SetError("Could not loop because after rewind, no data could be retrieved");
+								error_flag--;
+								/* Set the eof flag to force a quit so 
+								 * we don't get stuck in an infinite loop
+								 */
+								ALmixer_Channel_List[i].almixer_data->eof = 1;
+								continue;
+							}
+						}
+						else if(0 == chunk.num_bytes)
+						{
+							/* No more loops to do. 
+							 * EOF flag should be set.
+							 * Just go to next loop and
+							 * let things be handled correctly
+							 * in future update calls
+							 */
+							continue;
+						}
+						/* With every buffer in use, take back the processed one to refill.
+						 * Unqueue only 1 buffer for now.
+						 * If there are more than one,
+						 * let the next Update pass deal with it
+						 * so we don't stall the program for too long.
+						 */
+						if(ALmixer_Channel_List[i].almixer_data->num_buffers_in_use 
+							>= ALmixer_Channel_List[i].almixer_data->max_queue_buffers) 
+						{
+							alSourceUnqueueBuffers(
+								ALmixer_Channel_List[i].alsource,
+								1, &unqueued_buffer_id
+							);
+							if((error = alGetError()) != AL_NO_ERROR)
+							{
+								fprintf(stderr, "Error with unqueue: %s, buffer id is %d",
+									alGetString(error), unqueued_buffer_id);
+								ALmixer_SetError("Unqueue buffer failed: %s",
+									alGetString(error) );
+								error_flag--;
+							}
+						}
+						bytes_returned = BufferMoreData(
+							ALmixer_Channel_List[i].almixer_data,
+							(ALmixer_Channel_List[i].almixer_data->num_buffers_in_use 
+								< ALmixer_Channel_List[i].almixer_data->max_queue_buffers)
+								? ALmixer_Channel_List[i].almixer_data->buffer[ALmixer_Channel_List[i].almixer_data->num_buffers_in_use]
+								: unqueued_buffer_id,
+							s_stagingBuffer,
+							chunk.num_bytes
+						);
+						if(0 == bytes_returned)
+						{
+							continue;
+						}
 	/********* Possible trouble point. I might be queueing empty buffers on the mac. 
 	 * This check doesn't say if the buffer is valid. Only the EOF assumption is a clue at this point 
 	 */
@@ -7016,9 +7111,12 @@ ALboolean ALmixer_Init(ALuint frequency, ALuint num_sources, ALuint refresh)
 
 #ifdef ENABLE_ALMIXER_THREADS
 	s_simpleLock = SDL_CreateMutex();
-	if(NULL == s_simpleLock)
+	s_decodeLock = SDL_CreateMutex();
+	if( (NULL == s_simpleLock) || (NULL == s_decodeLock) )
 	{
 		/* SDL sets the error message already? */
+		SDL_DestroyMutex(s_simpleLock);
+		SDL_DestroyMutex(s_decodeLock);
 		_free(source);
 		_free(ALmixer_Channel_List);
 		_free(Source_Map_List);
@@ -7036,6 +7134,7 @@ ALboolean ALmixer_Init(ALuint frequency, ALuint num_sources, ALuint refresh)
 	{
 		/* SDL sets the error message already? */
 		SDL_DestroyMutex(s_simpleLock);
+		SDL_DestroyMutex(s_decodeLock);
 		_free(source);
 		_free(ALmixer_Channel_List);
 		_free(Source_Map_List);
@@ -7576,9 +7675,12 @@ ALboolean ALmixer_InitMixer(ALuint num_sources)
 	
 #ifdef ENABLE_ALMIXER_THREADS
 	s_simpleLock = SDL_CreateMutex();
-	if(NULL == s_simpleLock)
+	s_decodeLock = SDL_CreateMutex();
+	if( (NULL == s_simpleLock) || (NULL == s_decodeLock) )
 	{
 		/* SDL sets the error message already? */
+		SDL_DestroyMutex(s_simpleLock);
+		SDL_DestroyMutex(s_decodeLock);
 		_free(source);
 		_free(ALmixer_Channel_List);
 		_free(Source_Map_List);
@@ -7594,6 +7696,7 @@ ALboolean ALmixer_InitMixer(ALuint num_sources)
 	{
 		/* SDL sets the error message already? */
 		SDL_DestroyMutex(s_simpleLock);
+		SDL_DestroyMutex(s_decodeLock);
 		_free(source);
 		_free(ALmixer_Channel_List);
 		_free(Source_Map_List);
@@ -7822,8 +7925,12 @@ void ALmixer_Quit()
 	Stream_Thread_global = NULL;
 
 	SDL_DestroyMutex(s_simpleLock);
+	SDL_DestroyMutex(s_decodeLock);
 #endif
 	g_inInterruption = AL_FALSE;
+	free(s_stagingBuffer);
+	s_stagingBuffer = NULL;
+	s_stagingSize = 0;
 	
 	/* Delete all the OpenAL sources */
 	for(i=0; i<Number_of_Channels_global; i++)
@@ -8930,7 +9037,22 @@ void ALmixer_FreeData(ALmixer_Data* data)
 		return;
 	}
 	
+	if( (NULL == data) || data->decoded_all )
+	{
+		Internal_FreeData(data);
+		return;
+	}
+#ifdef ENABLE_ALMIXER_THREADS
+	SDL_LockMutex(s_simpleLock);
+#endif
+	if(0 == data->in_use)
+	{
+		Claim_Stream_Sample(data);
+	}
 	Internal_FreeData(data);
+#ifdef ENABLE_ALMIXER_THREADS
+	SDL_UnlockMutex(s_simpleLock);
+#endif
 }
 
 ALint ALmixer_GetTotalTime(ALmixer_Data* data)
