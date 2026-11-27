@@ -613,53 +613,92 @@ size_t SoundDecoder_Decode(SoundDecoder_Sample* sound_sample)
 }
 
 
+/* DecodeAll keeps at least this much frame-aligned free space ahead of each read:
+ * Core Audio reads whole frames only and flags EOF on a 0-frame read.
+ */
+#define DECODEALL_MIN_FREE_BYTES 32768
+/* Headroom DecodeAll adds to the caller's presize before the first read:
+ * one floor for the PCM a rounded-down presize misses, one for the free space the final reads need.
+ */
+#define DECODEALL_PRESIZE_HEADROOM_BYTES (2 * DECODEALL_MIN_FREE_BYTES)
+
 size_t SoundDecoder_DecodeAll(SoundDecoder_Sample* sound_sample)
 {
     SoundDecoder_SampleInternal* internal_sample = NULL;
-    void* data_buffer = NULL;
-    size_t updated_buffer_size = 0;
+    char* base_buffer = NULL;
+    char* headroom_buffer = NULL;
+    size_t capacity = 0;
+    size_t used = 0;
+    size_t frame_size = 0;
 
     BAIL_IF_MACRO(!s_isInitialized, ERR_NOT_INITIALIZED, 0);
 	BAIL_IF_MACRO(NULL == sound_sample, ERR_NULL_SAMPLE, 0);
-
-	/* My original thought was to call SetBufferSize and resize to 
-	 * the size needed to hold the entire decoded file utilizing total_time,
-	 * but it appears SDL_sound simply loops on SoundDecoder_Decode.
-	 * I suppose it is possible to partially decode or seek a file, and then
-	 * call DecodeAll so you won't have the whole thing in which case
-	 * my idea would waste memory.
-	 */
-    while( (0 == (sound_sample->flags & SOUND_SAMPLEFLAG_EOF) )
-		&& (0 == (sound_sample->flags & SOUND_SAMPLEFLAG_ERROR))
-	)
-    {
-        size_t bytes_decoded = SoundDecoder_Decode(sound_sample);
-        void* realloced_ptr = realloc(data_buffer, updated_buffer_size + bytes_decoded);
-        if(NULL == realloced_ptr)
-        {
-            sound_sample->flags |= SOUND_SAMPLEFLAG_ERROR;
-            SoundDecoder_SetError(ERR_OUT_OF_MEMORY);
-			if(NULL != data_buffer)
-			{
-				free(data_buffer);
-			}
-			return bytes_decoded;
-        }
-		data_buffer = realloced_ptr;
-		/* copy the chunk of decoded PCM to the end of our new data buffer */
-		memcpy( ((char*)data_buffer) + updated_buffer_size, sound_sample->buffer, bytes_decoded );
-		updated_buffer_size += bytes_decoded;
-    }
 
     internal_sample = (SoundDecoder_SampleInternal*)sound_sample->opaque;
 	if(internal_sample->buffer != sound_sample->buffer)
 	{
 		free(internal_sample->buffer);
 	}
-    free(sound_sample->buffer);
+	base_buffer = (char*)sound_sample->buffer;
+	capacity = sound_sample->buffer_size;
+	frame_size = ((sound_sample->actual.format & 0xFF) / 8) * sound_sample->actual.channels;
+	if(0 == frame_size)
+	{
+		frame_size = 1;
+	}
 
-	sound_sample->buffer = data_buffer;
-	sound_sample->buffer_size = updated_buffer_size;
+	/* Nothing is decoded yet, so a fresh block gives the headroom without a copy;
+	 * the realloc below is left for loads with no presize or a badly short one.
+	 */
+	headroom_buffer = (char*)malloc(capacity + DECODEALL_PRESIZE_HEADROOM_BYTES + frame_size);
+	if(NULL == headroom_buffer)
+	{
+		sound_sample->flags |= SOUND_SAMPLEFLAG_ERROR;
+		SoundDecoder_SetError(ERR_OUT_OF_MEMORY);
+	}
+	else
+	{
+		free(base_buffer);
+		base_buffer = headroom_buffer;
+		capacity += DECODEALL_PRESIZE_HEADROOM_BYTES + frame_size;
+	}
+
+	/* Decode straight into one buffer: each read lands in the free space
+	 * after the PCM so far, and the buffer grows by realloc when that space is short.
+	 */
+    while( (0 == (sound_sample->flags & SOUND_SAMPLEFLAG_EOF) )
+		&& (0 == (sound_sample->flags & SOUND_SAMPLEFLAG_ERROR))
+	)
+    {
+		size_t free_bytes = (capacity - used) - (capacity - used) % frame_size;
+		if(free_bytes < DECODEALL_MIN_FREE_BYTES)
+		{
+			size_t new_capacity = capacity + capacity / 2;
+			char* realloced_ptr = NULL;
+			if(new_capacity < used + DECODEALL_MIN_FREE_BYTES + frame_size)
+			{
+				new_capacity = used + DECODEALL_MIN_FREE_BYTES + frame_size;
+			}
+			realloced_ptr = (char*)realloc(base_buffer, new_capacity);
+			if(NULL == realloced_ptr)
+			{
+				sound_sample->flags |= SOUND_SAMPLEFLAG_ERROR;
+				SoundDecoder_SetError(ERR_OUT_OF_MEMORY);
+				break;
+			}
+			base_buffer = realloced_ptr;
+			capacity = new_capacity;
+			free_bytes = (capacity - used) - (capacity - used) % frame_size;
+		}
+		sound_sample->buffer = base_buffer + used;
+		sound_sample->buffer_size = free_bytes;
+		internal_sample->buffer = sound_sample->buffer;
+		internal_sample->buffer_size = sound_sample->buffer_size;
+		used += SoundDecoder_Decode(sound_sample);
+    }
+
+	sound_sample->buffer = base_buffer;
+	sound_sample->buffer_size = used;
 	internal_sample->buffer = sound_sample->buffer;
 	internal_sample->buffer_size = sound_sample->buffer_size;
 
