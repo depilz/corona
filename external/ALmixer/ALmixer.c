@@ -1510,7 +1510,6 @@ fprintf(stderr, "Hit eof while trying to buffer\n");
 	return bytes_decoded;
 }
 
-/* Copies decoded stream bytes into an OpenAL buffer */
 static ALuint BufferMoreData(ALmixer_Data* data, ALuint buffer, const void* bytes, ALuint num_bytes)
 {
 	ALenum error;
@@ -6039,7 +6038,6 @@ static ALint Update_ALmixer(void* data)
 						{
 							ALmixer_Channel_List[i].almixer_data->eof = 1;
 						}
-						/* The decode ran out of data with loops left and rewound */
 						if(chunk.looped)
 						{
 							if(chunk.rewind_failed)
