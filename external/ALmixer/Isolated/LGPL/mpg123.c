@@ -266,13 +266,8 @@ static int MPG123_open(Sound_Sample *sample, const char *ext)
     else if ((rc = mpg123_getformat(mp, &rate, &channels, &fmt)) != MPG123_OK)
         goto mpg123_open_failed;
 
-    if (mpg123_seek(mp, 0, SEEK_END) >= 0)  /* can seek? */
-    {
-        len = mpg123_tell(mp);
-        if ((rc = (int) mpg123_seek(mp, 0, SEEK_SET)) < 0)
-            goto mpg123_open_failed;
-        seekable = 1;
-    } /* if */
+    len = mpg123_length(mp);  /* exact after the scan */
+    seekable = (len >= 0);
 
     internal->decoder_private = mp;
     sample->actual.rate = rate;
