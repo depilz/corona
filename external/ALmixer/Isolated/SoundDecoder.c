@@ -364,7 +364,7 @@ void SoundDecoder_FreeSample(SoundDecoder_Sample* sound_sample)
 
 
 static int Internal_LoadSample(const SoundDecoder_DecoderFunctions *funcs,
-	SoundDecoder_Sample* sound_sample, const char *ext
+	SoundDecoder_Sample* sound_sample, const char *ext, unsigned int hints
 )
 {
     SoundDecoder_SampleInternal* internal_sample = (SoundDecoder_SampleInternal*)sound_sample->opaque;
@@ -373,6 +373,7 @@ static int Internal_LoadSample(const SoundDecoder_DecoderFunctions *funcs,
     /* fill in the funcs for this decoder... */
     sound_sample->decoder = &funcs->info;
 	internal_sample->funcs = funcs;
+	internal_sample->open_hints = hints;
 	if (!funcs->open(sound_sample, ext))
 	{
 		internal_sample->rw->seek(internal_sample->rw, current_file_position, SEEK_SET);
@@ -421,6 +422,15 @@ SoundDecoder_Sample* SoundDecoder_NewSampleFromFile(const char* file_name,
                                       SoundDecoder_AudioInfo* desired_format,
                                       size_t buffer_size)
 {
+	return SoundDecoder_NewSampleFromFileWithHints(file_name, desired_format, buffer_size, 0);
+}
+
+
+SoundDecoder_Sample* SoundDecoder_NewSampleFromFileWithHints(const char* file_name,
+                                      SoundDecoder_AudioInfo* desired_format,
+                                      size_t buffer_size,
+                                      unsigned int hints)
+{
 	
     const char* file_extension;
     ALmixer_RWops* rw_ops;
@@ -445,11 +455,17 @@ SoundDecoder_Sample* SoundDecoder_NewSampleFromFile(const char* file_name,
 
     rw_ops = ALmixer_RWFromFile(file_name, "rb");
 
-     return SoundDecoder_NewSample(rw_ops, file_extension, desired_format, buffer_size);
+     return SoundDecoder_NewSampleWithHints(rw_ops, file_extension, desired_format, buffer_size, hints);
 }
 
 
 SoundDecoder_Sample* SoundDecoder_NewSample(ALmixer_RWops* rw_ops, const char* file_extension, SoundDecoder_AudioInfo* desired_format, size_t buffer_size)
+{
+	return SoundDecoder_NewSampleWithHints(rw_ops, file_extension, desired_format, buffer_size, 0);
+}
+
+
+SoundDecoder_Sample* SoundDecoder_NewSampleWithHints(ALmixer_RWops* rw_ops, const char* file_extension, SoundDecoder_AudioInfo* desired_format, size_t buffer_size, unsigned int hints)
 {
     SoundDecoder_Sample* new_sample;
     SoundDecoder_SampleInternal* internal_sample;
@@ -510,7 +526,7 @@ SoundDecoder_Sample* SoundDecoder_NewSample(ALmixer_RWops* rw_ops, const char* f
                 {
                     if(0 == (SoundDecoder_strcasecmp(*decoder_file_extension, file_extension)))
                     {
-                        if(Internal_LoadSample(current_decoder->funcs, new_sample, file_extension))
+                        if(Internal_LoadSample(current_decoder->funcs, new_sample, file_extension, hints))
 						{
 							return(new_sample);
 						}
@@ -543,7 +559,7 @@ SoundDecoder_Sample* SoundDecoder_NewSample(ALmixer_RWops* rw_ops, const char* f
 
 			if(0 == already_tried_decoder)
 			{
-				if (Internal_LoadSample(current_decoder->funcs, new_sample, file_extension))
+				if (Internal_LoadSample(current_decoder->funcs, new_sample, file_extension, hints))
 				{
 					return new_sample;
 				}

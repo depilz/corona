@@ -16,6 +16,9 @@
 	#include "SoundDecoder.h"
 #else
 	#include "SDL_sound.h"
+	#define SOUND_DECODER_HINT_WHOLE_FILE 0
+	#define SoundDecoder_NewSampleWithHints(rw_ops, ext, desired, buffer_size, hints) Sound_NewSample(rw_ops, ext, desired, buffer_size)
+	#define SoundDecoder_NewSampleFromFileWithHints(file_name, desired, buffer_size, hints) Sound_NewSampleFromFile(file_name, desired, buffer_size)
 #endif
 
 #include "al.h" /* OpenAL */
@@ -8772,6 +8775,17 @@ static ALmixer_Data* DoLoad(Sound_Sample* sample, ALuint buffersize, ALboolean d
 }
 
 
+static Sound_Sample* Internal_NewSample(ALmixer_RWops* rwops, const char* fileext, const char* filename, Sound_AudioInfo* target, ALuint buffersize, ALboolean decode_mode_is_predecoded)
+{
+	unsigned int hints = (AL_TRUE == decode_mode_is_predecoded) ? SOUND_DECODER_HINT_WHOLE_FILE : 0;
+	if(NULL != filename)
+	{
+		return SoundDecoder_NewSampleFromFileWithHints(filename, target, buffersize, hints);
+	}
+	return SoundDecoder_NewSampleWithHints(rwops, fileext, target, buffersize, hints);
+}
+
+
 /* This will load a sample for us. Most of the uglyness is
  * error checking and the fact that streamed/predecoded files
  * must be treated differently.
@@ -8814,7 +8828,7 @@ ALmixer_Data* ALmixer_LoadSample_RW(ALmixer_RWops* rwops, const char* fileext, A
 		buffersize = ALMIXER_DEFAULT_BUFFERSIZE;
 	}
 	
-	sample = Sound_NewSample(rwops, fileext, &target, buffersize);
+	sample = Internal_NewSample(rwops, fileext, NULL, &target, buffersize, decode_mode_is_predecoded);
 	if(NULL == sample)
 	{
 		ALmixer_SetError("ALmixer_LoadSample_RW: Sound_NewSample: %s", Sound_GetError());
@@ -8925,7 +8939,7 @@ ALmixer_Data* ALmixer_LoadSample(const char* filename, ALuint buffersize, ALbool
 	Sound_FreeSample(sample);
 #endif
 
-	sample = Sound_NewSampleFromFile(filename, &target, buffersize);
+	sample = Internal_NewSample(NULL, NULL, filename, &target, buffersize, decode_mode_is_predecoded);
 	if(NULL == sample)
 	{
 		ALmixer_SetError("ALmixer_LoadSample: Sound_NewSampleFromFile: %s", Sound_GetError());

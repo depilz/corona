@@ -231,6 +231,7 @@ static int MPG123_open(Sound_Sample *sample, const char *ext)
     int seekable = 0;
     void *ptr = NULL;
     int rwops = 0;
+    const int whole_file = (internal->open_hints & SOUND_DECODER_HINT_WHOLE_FILE);
 
     /* !!! FIXME: so much tapdance because we need a pointer, not an int. */
     SDL_LockMutex(mpg123_mutex);
@@ -261,13 +262,16 @@ static int MPG123_open(Sound_Sample *sample, const char *ext)
         goto mpg123_open_failed;
     else if ((rc = mpg123_open_fd(mp, rwops)) != MPG123_OK)
         goto mpg123_open_failed;
-    else if ((rc = mpg123_scan(mp)) != MPG123_OK)
+    else if (!whole_file && (rc = mpg123_scan(mp)) != MPG123_OK)
         goto mpg123_open_failed;  /* !!! FIXME: this may be wrong. */
     else if ((rc = mpg123_getformat(mp, &rate, &channels, &fmt)) != MPG123_OK)
         goto mpg123_open_failed;
 
-    len = mpg123_length(mp);  /* exact after the scan */
-    seekable = (len >= 0);
+    len = mpg123_length(mp);  /* exact after the scan, an estimate without it */
+    if (whole_file)
+        seekable = (SDL_RWseek(internal->rw, 0, SEEK_CUR) >= 0);
+    else
+        seekable = (len >= 0);
 
     internal->decoder_private = mp;
     sample->actual.rate = rate;
@@ -296,8 +300,9 @@ static int MPG123_open(Sound_Sample *sample, const char *ext)
     sample->flags = SOUND_SAMPLEFLAG_NONE;
     internal->total_time = -1;
     if (seekable)
-    {
         sample->flags |= SOUND_SAMPLEFLAG_CANSEEK;
+    if (len >= 0)
+    {
         internal->total_time = ((len / rate) * 1000) +
                                (((len % rate) * 1000) / rate);
     } /* if */

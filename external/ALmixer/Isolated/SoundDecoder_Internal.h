@@ -35,6 +35,7 @@ typedef struct SoundDecoder_SampleInternal
     size_t buffer_size;
     void *decoder_private;
     ptrdiff_t total_time;
+    unsigned int open_hints; /* SOUND_DECODER_HINT_WHOLE_FILE: the sample is decoded whole once (no stream), so open may skip exact-length work */
 } SoundDecoder_SampleInternal;
 
 typedef struct SoundDecoder_SampleInternal Sound_SampleInternal;

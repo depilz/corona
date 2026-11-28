@@ -208,6 +208,20 @@ extern SOUND_DECODER_DECLSPEC SoundDecoder_Sample* SOUND_DECODER_CALL SoundDecod
 	size_t bufferSize);
 #define Sound_NewSampleFromFile SoundDecoder_NewSampleFromFile
 
+#define SOUND_DECODER_HINT_WHOLE_FILE 0x1
+
+extern SOUND_DECODER_DECLSPEC SoundDecoder_Sample* SOUND_DECODER_CALL SoundDecoder_NewSampleWithHints(
+	struct ALmixer_RWops* rw_ops,
+	const char* ext,
+	SoundDecoder_AudioInfo* desired,
+	size_t buffer_size,
+	unsigned int hints);
+
+extern SOUND_DECODER_DECLSPEC SoundDecoder_Sample* SOUND_DECODER_CALL SoundDecoder_NewSampleFromFileWithHints(const char* file_name,
+	SoundDecoder_AudioInfo* desired,
+	size_t bufferSize,
+	unsigned int hints);
+
 
 extern SOUND_DECODER_DECLSPEC void SOUND_DECODER_CALL SoundDecoder_FreeSample(SoundDecoder_Sample* sound_sample);
 #define Sound_FreeSample SoundDecoder_FreeSample
